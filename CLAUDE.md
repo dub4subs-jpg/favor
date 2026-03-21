@@ -1,91 +1,60 @@
-# CLAUDE.md — Agent Instructions for DellV2
+# CLAUDE.md — Favor Framework
 
 ## What is this?
-DellV2 is a WhatsApp AI companion bot built on the "Favor" framework. It uses Baileys (WhatsApp Web API) and Claude (Anthropic) with tool use, persistent memory (SQLite), conversation compaction, scheduled tasks, laptop remote access, and voice/vision support.
+Favor is a WhatsApp AI companion framework built on Baileys (WhatsApp Web API) with multi-model routing, persistent memory (SQLite), conversation compaction, scheduled tasks, voice/vision support, browser automation, and an encrypted vault.
+
+## Quick Start
+1. Copy `config.example.json` → `config.json` and fill in your API keys
+2. Copy `knowledge/*.example.md` → remove `.example` suffix and customize
+3. Run `npm install`
+4. Run `node favor.js` (will show QR code to link WhatsApp)
 
 ## Running file
 The active bot is **`favor.js`** — NOT `bot.js` (legacy, kept for reference only).
 
-## How to restart
-```bash
-./deploy.sh          # kills old process, starts new one, tails logs
-# or manually:
-pkill -f "node /root/whatsapp-bot/favor.js"
-node /root/whatsapp-bot/favor.js &
-```
-
 ## Architecture
 ```
 favor.js        — Main bot: WhatsApp connection, message handling, multi-model routing, tool loop
-router.js       — Decision router: Gemini classifier + specialist executors (Claude CLI, Kimi, Gemini Analyst)
+router.js       — Decision router: Gemini classifier + specialist executors
 db.js           — SQLite database layer (sessions, memory, topics, crons, audit)
 compactor.js    — Summarizes old messages to save context window space
 cron.js         — Scheduled task engine (reminders, proactive outreach)
 config.json     — Runtime config (NOT in git — has API keys). See config.example.json
 knowledge/      — Text/markdown files loaded into system prompt as knowledge base
-data/favor.db   — SQLite database (NOT in git)
+data/favor.db   — SQLite database (NOT in git, auto-created on first run)
 ```
 
-## Specialist Routing (Kimi Swarm Integration)
-Dell coordinates 4 specialist AI systems:
+## Multi-Model Routing
+The bot coordinates multiple AI systems:
 - **ChatGPT (Brain)** — gpt-4o: reasoning, planning, conversation, tool coordination (default route)
-- **Claude Code (Engineer)** — CLI subprocess: coding, debugging, infrastructure (uses Max subscription, cost-free)
+- **Claude Code (Engineer)** — CLI subprocess: coding, debugging, infrastructure
 - **Gemini (Analyst)** — gemini-2.5-flash: large document analysis, research, high-context tasks
-- **Kimi (Worker Swarm)** — kimi-k2: structured artifacts (reports, slides, spreadsheets, batch production)
+- **Kimi (Worker Swarm)** — kimi-k2: structured artifacts (reports, slides, spreadsheets)
 
 Routes: tool, memory, mini, claude, gemini, kimi, agent, full, hybrid
 Router uses Gemini 2.5 Flash for classification, keyword overrides for obvious cases.
 
 ## Key patterns
 
-### Tool use loop (favor.js ~line 808-830)
-Claude can call tools (memory, laptop, server, web search, crons, topics). The tool loop:
-1. Send messages to Claude API with tools
+### Tool use loop (favor.js)
+The bot can call tools (memory, server, web search, crons, topics). The tool loop:
+1. Send messages to the AI API with tools
 2. If response.stop_reason === 'tool_use', execute tools and append results
-3. Repeat until Claude gives a text response
-
-### History sanitization (favor.js ~line 358-388)
-`sanitizeHistory()` ensures tool_use/tool_result pairs are always intact before sending to the API. This prevents 400 errors from orphaned tool blocks. Applied on every `getHistory()` call.
+3. Repeat until the AI gives a text response
 
 ### Compaction (compactor.js)
-When conversation exceeds threshold (default 30 messages), older messages are summarized by a cheap model (Haiku) and replaced with a summary block. Split point logic avoids breaking tool pairs.
+When conversation exceeds threshold (default 30 messages), older messages are summarized and replaced with a summary block. Split point logic avoids breaking tool pairs.
 
 ### Session storage
 Conversations are stored in SQLite (`sessions` table) as JSON arrays of messages. Loaded on each incoming message, saved after each response.
 
-## Common issues
+### Config hot-reload
+`config.json` is watched every 2s. Model changes take effect on next message. Or use `/reload` command in WhatsApp.
 
-### "tool_use ids were found without tool_result blocks"
-History has orphaned tool_use without matching tool_result. The `sanitizeHistory()` function handles this automatically. If it recurs, check:
-- Compactor split logic in `compactor.js`
-- Whether the tool loop in `favor.js` properly pushes both assistant content AND tool results
-
-### Bot not responding
-1. Check if running: `ps aux | grep favor.js`
-2. Check logs: `tail -50 /tmp/favor.log`
-3. Check WhatsApp connection: look for `[FAVOR] ... is online` in logs
-4. Check API key: `echo $ANTHROPIC_API_KEY | head -c 10`
-
-### Config changes
-`config.json` is hot-reloaded (fs.watchFile every 2s). Model changes take effect on next message. Or use `/reload` command in WhatsApp.
-
-## Memory Sync Bot (sync.js)
-DellV2 and Claude Code share state via `sync.js`. After making changes, log them:
-```bash
-node sync-cli.js sync '{"summary":"what you changed","type":"file_change","next":"restart bot to test"}'
-```
-
-Available commands:
-```bash
-node sync-cli.js status       # Quick overview
-node sync-cli.js state        # Full JSON state
-node sync-cli.js events 10    # Recent event log
-node sync-cli.js recover      # Recovery report after crash
-node sync-cli.js handoff '{"done":"what was done","next":"what to do next"}'
-node sync-cli.js checkpoint "reason"
-```
-
-**Always sync after:** editing favor.js/router.js/db.js, fixing bugs, adding features, or completing tasks.
+## Setup requirements
+- Node.js 18+
+- API keys: OpenAI (required), Anthropic (optional), Gemini (optional), Brave Search (optional)
+- A WhatsApp account to link via QR code
 
 ## Commit conventions
 - Commit working states before making changes
