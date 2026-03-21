@@ -1,0 +1,315 @@
+// router.js — Decision Router + Multi-Brain Orchestration Layer for DellV2
+// Classifies each request and routes to the most efficient execution path
+
+const { execFile, spawn } = require('child_process');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
+
+const CLAUDE_BIN = '/root/.local/bin/claude';
+
+// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
+function claudeEnv() {
+  return Object.fromEntries(
+    Object.entries({ ...process.env, PATH: `/root/.local/bin:${process.env.PATH}` })
+      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
+  );
+}
+
+// ─── ROUTE DEFINITIONS ───
+// tool    → direct tool execution, minimal/no model reasoning needed
+// memory  → fetch memory first, then respond
+// chat    → casual conversation → Claude CLI (free via Max subscription)
+// mini    → use gpt-4o-mini (cheap: summarize, extract, format, simple Q&A)
+// claude  → engineering/code task → Claude CLI subprocess
+// gemini  → large document analysis, research aggregation, long-context tasks
+// kimi    → structured artifact production (slides, reports, spreadsheets, formatted docs, batch work)
+// agent   → queue to favor-runner background agents
+// full    → gpt-4o for high-stakes reasoning (default)
+// hybrid  → tool + model together
+
+const ROUTE_DESCRIPTIONS = `
+tool: Direct action via laptop/system tools (open app, run command, check status, send email, create invoice, list files, fetch URL, vault list, browser status)
+memory: User asking about something previously discussed, stored facts, preferences, or past decisions
+chat: Casual conversation, greetings, banter, personal talk, jokes, chitchat, venting, emotional support, life updates, opinions, small talk, "how are you", "what's up", "good morning", daily check-ins. PREFER chat for all non-task conversational messages.
+mini: Simple mechanical request (summarize, reformat, extract info, simple factual Q&A, short reply)
+claude: Any technical or engineering task — code, debugging, scripts, APIs, infrastructure, system design, architecture, technical analysis, error messages, logs, builds, deployments, database queries, performance, security review, code explanation, refactoring. PREFER claude for all code tasks.
+gemini: Large-scale document analysis, reading long PDFs, processing datasets, summarizing transcripts, research aggregation, competitor analysis, SEO audits, knowledge extraction — anything needing high-context analysis of large information volumes
+kimi: Generating structured business artifacts — slide decks, reports, spreadsheets, formatted documents, data summaries, batch research, multi-step content production, parallel task execution
+agent: Long-running background task (research, batch work, multi-step automation, things that take minutes)
+full: Non-technical high-stakes reasoning (business strategy, financial decisions, marketing copy, creative writing, complex interpersonal situations, purchasing/booking flows, browsing websites to buy things)
+hybrid: Needs both tool execution AND model reasoning (e.g., read a file then analyze it, save/retrieve vault data, browse a website and fill forms)
+`.trim();
+
+// ─── KEYWORD OVERRIDES — bypass classifier for obvious cases ───
+const TOOL_KEYWORDS = [
+  'screenshot', 'screen capture', 'capture my', 'capture the screen',
+  'open illustrator', 'open photoshop', 'open app', 'launch app',
+  'laptop', 'my computer', 'my pc', 'run command', 'run on my',
+  'take a screenshot', 'send me a screenshot', 'show me my screen',
+  'close app', 'close illustrator', 'close photoshop',
+  'what\'s on my screen', 'what is on my screen',
+  'run on droplet', 'run this on droplet', 'run on server', 'run this on server',
+  'execute on droplet', 'execute on server', 'run this code on droplet',
+  'run this code on server', 'on the droplet', 'on the server',
+  'on my desktop', 'on my screen', 'logged in on', 'i\'m on the page',
+  'on the page', 'go to the website', 'fill out the form', 'fill the form',
+  'click on', 'navigate to', 'open the website', 'browse to',
+  'barcode', 'barcodes', 'gs1', 'gtin', 'upc',
+  // Messaging & email — need send_message / send_email tools
+  'message her', 'message him', 'text her', 'text him',
+  'send her a', 'send him a', 'send a message', 'send message',
+  'ask her', 'ask him', 'tell her', 'tell him',
+  'ask cortana', 'tell cortana', 'message cortana', 'text cortana',
+  'ask josh', 'tell josh', 'message josh', 'text josh',
+  'ask jerry', 'tell jerry', 'message jerry', 'text jerry',
+  'reach out to', 'hit up', 'let her know', 'let him know',
+  'ping her', 'ping him', 'ping cortana', 'follow up with',
+  'email jerry', 'email her', 'email him', 'send email', 'send an email',
+  'send the invoice', 'send invoice',
+];
+
+const PURCHASE_KEYWORDS = [
+  'buy', 'purchase', 'book a flight', 'book flight', 'book me', 'plane ticket',
+  'checkout', 'add to cart', 'order', 'shop for', 'buy me',
+  'use my card', 'pay for', 'fill in my info', 'autofill',
+];
+
+const VAULT_KEYWORDS = [
+  'save my card', 'store my card', 'save my address', 'vault', 'my card info',
+  'save my info', 'store my info', 'save my details',
+];
+
+const VIDEO_KEYWORDS = [
+  'watch this', 'learn from this', 'analyze this video', 'what\'s in this video',
+  'youtube.com', 'youtu.be', 'tiktok.com', 'twitter.com/i/status',
+  'x.com/i/status', 'vimeo.com', 'instagram.com/reel',
+];
+
+const FLYER_KEYWORDS = [
+  'make a flyer', 'create a flyer', 'generate a flyer', 'design a flyer',
+  'flyer for', 'product flyer', 'promo flyer', 'distributor sheet',
+  'save to drive', 'save this to drive', 'save image to drive',
+  'save to products', 'save to brand assets',
+];
+
+const UIUX_KEYWORDS = [
+  'design system', 'color palette', 'ui style', 'ux style',
+  'design a website', 'design a page', 'design a landing page',
+  'what style for', 'what colors for', 'what fonts for',
+  'glassmorphism', 'neumorphism', 'brutalism', 'minimalism',
+  'ui/ux', 'ui ux', 'font pairing', 'typography for',
+];
+
+const KIMI_KEYWORDS = [
+  'make me a report', 'create a report', 'build a report', 'generate a report',
+  'slide deck', 'presentation', 'make slides', 'create slides',
+  'spreadsheet', 'make a spreadsheet', 'data summary', 'format this data',
+  'create a document', 'write a report', 'batch research',
+  'make me a template', 'create a template',
+];
+
+const GEMINI_KEYWORDS = [
+  'analyze this document', 'analyze this pdf', 'read this pdf',
+  'summarize this document', 'research report', 'seo audit',
+  'competitor analysis', 'analyze this data', 'long document',
+];
+
+function keywordOverride(message) {
+  const lower = message.toLowerCase();
+  // Catch "ask/tell/message/text/ping [name]" patterns — always needs send_message tool
+  if (/\b(ask|tell|message|text|ping|remind|update|notify|email)\s+[a-z]{2,}/.test(lower) && !/\b(me|you|yourself|dell)\b/.test(lower.match(/\b(?:ask|tell|message|text|ping|remind|update|notify|email)\s+([a-z]+)/)?.[1] || '')) {
+    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: messaging action detected', classifier_ms: 0 };
+  }
+  if (TOOL_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: laptop/tool action', classifier_ms: 0 };
+  }
+  if (PURCHASE_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'full', escalation_score: 8, needs_review: true, reason: 'keyword override: purchase/booking flow', classifier_ms: 0 };
+  }
+  if (VAULT_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'hybrid', escalation_score: 7, needs_review: false, reason: 'keyword override: vault operation', classifier_ms: 0 };
+  }
+  if (VIDEO_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: video analysis', classifier_ms: 0 };
+  }
+  if (FLYER_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: flyer/drive operation', classifier_ms: 0 };
+  }
+  if (UIUX_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: UI/UX design system', classifier_ms: 0 };
+  }
+  if (KIMI_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'kimi', escalation_score: 5, needs_review: false, reason: 'keyword override: structured artifact production', classifier_ms: 0 };
+  }
+  if (GEMINI_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'gemini', escalation_score: 5, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
+  }
+  return null;
+}
+
+// ─── CLASSIFIER ───
+// Accepts openai param for backwards compat but uses Gemini internally
+async function classify(_openai, message, recentContext = '') {
+  // Check keyword overrides first — no API call needed
+  const override = keywordOverride(message);
+  if (override) return override;
+
+  const start = Date.now();
+  try {
+    const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = gemini.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      systemInstruction: `You are a request router for an AI assistant. Classify the user message into ONE route.
+
+${ROUTE_DESCRIPTIONS}
+
+Escalation scoring (0-10):
+0-3: Low complexity, tool or mini
+4-6: Medium, mini or full
+7-10: High stakes, must use full
+
+Respond ONLY with valid JSON, no markdown:
+{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}`,
+      generationConfig: { maxOutputTokens: 120, temperature: 0 },
+    });
+
+    const result = await model.generateContent(
+      `Context (last 300 chars): ${recentContext.slice(-300)}\n\nMessage: ${message}`
+    );
+    const raw = result.response.text().trim();
+    // Strip markdown fences if present, then extract first JSON object
+    let json = raw.replace(/^```json?\s*/s, '').replace(/\s*```$/s, '');
+    // Match balanced braces (handles values containing special chars)
+    const jsonMatch = json.match(/\{[\s\S]*\}/);
+    if (jsonMatch) json = jsonMatch[0];
+    let decision;
+    try {
+      decision = JSON.parse(json);
+    } catch {
+      // Gemini sometimes returns truncated JSON — try to extract fields manually
+      const route = json.match(/"route"\s*:\s*"(\w+)"/)?.[1];
+      const score = json.match(/"escalation_score"\s*:\s*(\d+)/)?.[1];
+      const reason = json.match(/"reason"\s*:\s*"([^"]*)"/)?.[1];
+      if (route) {
+        decision = { route, escalation_score: parseInt(score || '0'), needs_review: false, reason: reason || 'partial parse recovery' };
+      } else {
+        throw new Error(`Unparseable classifier response: ${json.slice(0, 120)}`);
+      }
+    }
+    decision.classifier_ms = Date.now() - start;
+    return decision;
+  } catch (e) {
+    console.warn('[ROUTER] Classification failed, defaulting to chat:', e.message);
+    return { route: 'chat', escalation_score: 0, needs_review: false, reason: 'classification error — free fallback', classifier_ms: Date.now() - start };
+  }
+}
+
+// ─── CLAUDE CLI EXECUTOR ───
+function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools } = {}) {
+  // Use spawn + stdin for long prompts (avoids arg length limits)
+  // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
+  const args = (imagePath || allowTools)
+    ? ['--print', '--allowedTools', 'Bash', 'Read', '-']
+    : ['--print', '-'];
+  return new Promise((resolve, reject) => {
+    const proc = spawn(CLAUDE_BIN, args, {
+      timeout: timeoutMs,
+      env: claudeEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', d => stdout += d);
+    proc.stderr.on('data', d => stderr += d);
+    proc.on('close', (code) => {
+      const out = stdout.trim() || stderr.trim() || '(no output)';
+      if (code !== 0 && !stdout.trim()) reject(new Error(stderr.trim() || `exit code ${code}`));
+      else resolve(out.substring(0, 1024 * 1024 * 4));
+    });
+    proc.on('error', reject);
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
+}
+
+// ─── TELEMETRY LOGGER ───
+function logTelemetry(db, data) {
+  try {
+    // Accept either raw better-sqlite3 instance or FavorMemory wrapper
+    const rawDb = (db && typeof db.exec === 'function') ? db : (db && db.db);
+    if (!rawDb || typeof rawDb.exec !== 'function') {
+      console.warn('[ROUTER] Telemetry skipped: no valid db handle');
+      return;
+    }
+    rawDb.exec(`CREATE TABLE IF NOT EXISTS router_telemetry (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact TEXT,
+      route TEXT,
+      escalation_score INTEGER,
+      model_used TEXT,
+      tools_used TEXT,
+      needs_review INTEGER,
+      success INTEGER,
+      classifier_ms INTEGER,
+      total_ms INTEGER,
+      reason TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`);
+    rawDb.prepare(`INSERT INTO router_telemetry
+      (contact, route, escalation_score, model_used, tools_used, needs_review, success, classifier_ms, total_ms, reason)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      data.contact || '',
+      data.route || 'full',
+      data.escalation_score || 0,
+      data.model_used || 'gpt-4o',
+      JSON.stringify(data.tools_used || []),
+      data.needs_review ? 1 : 0,
+      data.success ? 1 : 0,
+      data.classifier_ms || 0,
+      data.total_ms || 0,
+      data.reason || ''
+    );
+  } catch (e) {
+    console.warn('[ROUTER] Telemetry log failed:', e.message);
+  }
+}
+
+// ─── KIMI API EXECUTOR (Moonshot / NVIDIA NIM) ───
+async function runKimi(prompt, config) {
+  const apiKey = config?.api?.kimiApiKey || process.env.KIMI_API_KEY;
+  if (!apiKey) throw new Error('Kimi API key not configured');
+
+  const kimi = new OpenAI({
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+    apiKey,
+  });
+
+  const response = await kimi.chat.completions.create({
+    model: 'moonshotai/kimi-k2-instruct',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a structured artifact production specialist. You create well-formatted reports, data summaries, slide outlines, spreadsheet data, and business documents. Be thorough, organized, and professional. Use markdown formatting for structure.`
+      },
+      { role: 'user', content: prompt }
+    ],
+    max_tokens: 4096,
+    temperature: 0.3,
+  });
+
+  return response.choices[0]?.message?.content || '(no output)';
+}
+
+// ─── GEMINI ANALYST EXECUTOR ───
+async function runGeminiAnalyst(prompt) {
+  const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = gemini.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    generationConfig: { maxOutputTokens: 8192, temperature: 0.2 },
+  });
+
+  const result = await model.generateContent(prompt);
+  return result.response.text() || '(no output)';
+}
+
+module.exports = { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry };

@@ -1,0 +1,81 @@
+{
+  "identity": {
+    "name": "Favor",
+    "tagline": "Always in your favor.",
+    "personality": "companion",
+    "tone": "friendly, helpful, direct"
+  },
+  "model": {
+    "provider": "openai",
+    "id": "gpt-4o",
+    "maxTokens": 2048,
+    "contextWindow": 128000
+  },
+  "fallbackModel": {
+    "provider": "openai",
+    "id": "gpt-4o-mini",
+    "maxTokens": 2048
+  },
+  "api": {
+    "anthropicBaseUrl": "https://api.anthropic.com",
+    "openaiApiKey": "YOUR_OPENAI_API_KEY",
+    "geminiApiKey": "YOUR_GEMINI_API_KEY",
+    "braveApiKey": "YOUR_BRAVE_API_KEY",
+    "kimiApiKey": ""
+  },
+  "whatsapp": {
+    "enabled": true,
+    "dmPolicy": "allowlist",
+    "operatorNumber": "+1XXXXXXXXXX",
+    "securityPhrase": "changeme",
+    "allowFrom": [
+      "+1XXXXXXXXXX"
+    ],
+    "trustedContacts": [],
+    "allowGroups": false,
+    "selfChatMode": true,
+    "mediaMaxMb": 50,
+    "debounceMs": 0,
+    "credentialsDir": "/root/.openclaw/credentials/whatsapp/default"
+  },
+  "memory": {
+    "backend": "sqlite",
+    "dbPath": "./data/favor.db",
+    "maxSessionHistory": 40,
+    "contextPruning": {
+      "enabled": true,
+      "maxMessages": 30
+    }
+  },
+  "compaction": {
+    "model": "gemini-2.5-flash",
+    "threshold": 30,
+    "keepRecent": 12,
+    "summaryTokens": 512
+  },
+  "vault": {
+    "secret": "CHANGE_THIS_TO_A_RANDOM_SECRET"
+  },
+  "knowledge": {
+    "dir": "./knowledge"
+  },
+  "laptop": {
+    "enabled": false,
+    "user": "your-username",
+    "host": "your-laptop-ip",
+    "port": 22,
+    "connectTimeout": 5000,
+    "execTimeout": 15000
+  },
+  "screenAwareness": {
+    "enabled": false,
+    "intervalMs": 180000,
+    "lastContext": ""
+  },
+  "service": {
+    "autoRestart": true,
+    "maxRestartAttempts": 10,
+    "restartDelayMs": 5000,
+    "heartbeatIntervalMs": 1800000
+  }
+}
