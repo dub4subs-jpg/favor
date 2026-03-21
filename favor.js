@@ -11,6 +11,7 @@ const { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry } = requ
 const Vault = require('./vault');
 const Browser = require('./browser');
 const VideoProcessor = require('./video');
+const BuildMode = require('./build-mode');
 const syncBot = require('./sync');
 const pino = require('pino');
 
@@ -79,6 +80,10 @@ console.log('[BROWSER] Puppeteer browser module loaded');
 // ─── VIDEO PROCESSOR ───
 let videoProcessor = new VideoProcessor(openai);
 console.log('[VIDEO] Video processor initialized');
+
+// ─── BUILD MODE (Claude Code for software building) ───
+const buildMode = new BuildMode(db);
+console.log('[BUILD] Build mode initialized');
 // Backfill embeddings for any memories saved before semantic search was added
 setTimeout(() => backfillEmbeddings().catch(e => console.warn('[MEMORY] Backfill error:', e.message)), 5000);
 
@@ -463,6 +468,40 @@ const TOOLS = [
     type: 'object',
     properties: {},
     required: []
+  }),
+  // ─── BUILD MODE TOOLS ───
+  oaiTool('build_plan', 'Plan a software project. Claude Code analyzes requirements and creates a phased build plan. Use when operator says "build this", "build me", "create an app", etc.', {
+    type: 'object',
+    properties: {
+      description: { type: 'string', description: 'What to build — features, tech stack, purpose' },
+      work_dir: { type: 'string', description: 'Directory to build in (default: /root/builds/<project-name>)' },
+    },
+    required: ['description']
+  }),
+  oaiTool('build_execute', 'Execute a build task using Claude Code. Runs a specific step from the build plan — creates files, writes code, installs deps, commits. Use after build_plan to run each phase.', {
+    type: 'object',
+    properties: {
+      task: { type: 'string', description: 'The specific task to execute (from the build plan)' },
+      work_dir: { type: 'string', description: 'Project directory' },
+      context: { type: 'string', description: 'Additional context (previous plan, requirements, etc.)' },
+    },
+    required: ['task', 'work_dir']
+  }),
+  oaiTool('build_verify', 'Verify a build — Claude Code reviews the project, runs tests, checks requirements are met.', {
+    type: 'object',
+    properties: {
+      work_dir: { type: 'string', description: 'Project directory to verify' },
+      requirements: { type: 'string', description: 'What the project should do (from original description)' },
+    },
+    required: ['work_dir', 'requirements']
+  }),
+  oaiTool('build_raw', 'Run a freeform Claude Code command in a project. For quick fixes, adding features, debugging — anything that doesn\'t need the full plan/execute flow.', {
+    type: 'object',
+    properties: {
+      prompt: { type: 'string', description: 'What to do (Claude Code gets full tool access)' },
+      work_dir: { type: 'string', description: 'Working directory' },
+    },
+    required: ['prompt', 'work_dir']
   }),
 ];
 
@@ -1128,6 +1167,50 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
         next_step: recovery.recommended_next,
         recent: recovery.recent_events_summary.slice(-5)
       }, null, 2);
+    }
+    // ─── BUILD MODE ───
+    case 'build_plan': {
+      const workDir = input.work_dir || `/root/builds/${input.description.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`;
+      if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
+      await sock.sendMessage(context.contact, { text: `🔨 *Build Mode* — Planning project in \`${workDir}\`...\nThis may take a minute or two.` });
+      try {
+        const plan = await buildMode.plan(input.description, workDir);
+        buildMode.setState(context.contact, { workDir, description: input.description, plan, phase: 'planned' });
+        return `Build plan created for ${workDir}:\n\n${plan}`;
+      } catch (e) {
+        return `Build planning failed: ${e.message}`;
+      }
+    }
+    case 'build_execute': {
+      await sock.sendMessage(context.contact, { text: `⚡ *Build Mode* — Executing task in \`${input.work_dir}\`...\nClaude Code is writing code. This may take a few minutes.` });
+      try {
+        const result = await buildMode.execute(input.task, input.work_dir, { context: input.context || '' });
+        const state = buildMode.getState(context.contact);
+        if (state) buildMode.setState(context.contact, { ...state, phase: 'building', lastTask: input.task });
+        return `Build step completed:\n\n${result}`;
+      } catch (e) {
+        return `Build execution failed: ${e.message}`;
+      }
+    }
+    case 'build_verify': {
+      await sock.sendMessage(context.contact, { text: `🔍 *Build Mode* — Verifying build in \`${input.work_dir}\`...` });
+      try {
+        const result = await buildMode.verify(input.work_dir, input.requirements);
+        const state = buildMode.getState(context.contact);
+        if (state) buildMode.setState(context.contact, { ...state, phase: 'verified' });
+        return `Build verification:\n\n${result}`;
+      } catch (e) {
+        return `Build verification failed: ${e.message}`;
+      }
+    }
+    case 'build_raw': {
+      await sock.sendMessage(context.contact, { text: `🔨 *Build Mode* — Running Claude Code in \`${input.work_dir}\`...` });
+      try {
+        const result = await buildMode.raw(input.prompt, input.work_dir);
+        return `Claude Code result:\n\n${result}`;
+      } catch (e) {
+        return `Build command failed: ${e.message}`;
+      }
     }
     default: return 'Unknown tool: ' + name;
   }

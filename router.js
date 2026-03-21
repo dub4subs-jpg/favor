@@ -28,7 +28,7 @@ function claudeEnv() {
 // hybrid  → tool + model together
 
 const ROUTE_DESCRIPTIONS = `
-tool: Direct action via laptop/system tools (open app, run command, check status, send email, create invoice, list files, fetch URL, vault list, browser status)
+tool: Direct action via laptop/system tools (open app, run command, check status, send email, create invoice, list files, fetch URL, vault list, browser status, build software projects via Claude Code)
 memory: User asking about something previously discussed, stored facts, preferences, or past decisions
 chat: Casual conversation, greetings, banter, personal talk, jokes, chitchat, venting, emotional support, life updates, opinions, small talk, "how are you", "what's up", "good morning", daily check-ins. PREFER chat for all non-task conversational messages.
 mini: Simple mechanical request (summarize, reformat, extract info, simple factual Q&A, short reply)
@@ -106,6 +106,15 @@ const GEMINI_KEYWORDS = [
   'competitor analysis', 'analyze this data', 'long document',
 ];
 
+const BUILD_KEYWORDS = [
+  'build this', 'build me', 'build mode', 'build a ', 'build an ',
+  'create an app', 'create a website', 'create a tool', 'create a script',
+  'make me an app', 'make me a website', 'make me a tool',
+  'code this', 'code me a', 'develop this', 'develop a ',
+  'use claude code to', 'have claude code', 'shell out to claude',
+  'start a build', 'start building',
+];
+
 function keywordOverride(message) {
   const lower = message.toLowerCase();
   // Catch "ask/tell/message/text/ping [name]" patterns — always needs send_message tool
@@ -132,6 +141,9 @@ function keywordOverride(message) {
   }
   if (GEMINI_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'gemini', escalation_score: 5, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
+  }
+  if (BUILD_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 6, needs_review: false, reason: 'keyword override: build mode activation', classifier_ms: 0 };
   }
   return null;
 }
