@@ -113,11 +113,13 @@ const SELFCHECK_KEYWORDS = [
 ];
 
 const GUARDIAN_KEYWORDS = [
-  'run guardian', 'guardian scan', 'scan the project', 'scan this project',
+  'run guardian', 'guardian scan', 'guardian status', 'guardian report',
+  'scan the project', 'scan this project',
   'health check', 'health scan', 'audit the code', 'audit this',
   'check for bugs', 'check for issues', 'run a scan', 'security scan',
   'regression check', 'quality check', 'qa scan', 'qa check',
   'is the project healthy', 'any regressions', 'run tests on',
+  'api spend', 'rate limit', 'spend limit',
 ];
 
 const BUILD_KEYWORDS = [
