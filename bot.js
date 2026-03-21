@@ -9,7 +9,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const ALLOWED_NUMBERS = process.env.ALLOWED_NUMBERS ? process.env.ALLOWED_NUMBERS.split(',') : [];
 const MODEL = 'gpt-4o';
 const MAX_HISTORY = 30;
-const LAPTOP_USER = process.env.LAPTOP_USER || 'ronde';
+const LAPTOP_USER = process.env.LAPTOP_USER || 'your-username';
 const LAPTOP_PORT = 2222;
 const LAPTOP_TIMEOUT = 15000;
 
@@ -92,7 +92,7 @@ async function executeTool(name, input) {
 }
 
 function buildSystemPrompt() {
-  return 'You are Delly — the central AI brain for all operations. Powered by GPT-4o, accessible via WhatsApp.\n\nYou belong to your operator. Direct, concise, sharp. No fluff. You know their business inside and out.\n\nLONG-TERM MEMORY:\nYou have tools to save and recall memories. USE THEM PROACTIVELY:\n- Important info → save as fact\n- Decisions made → save as decision\n- Preferences learned → save as preference\n- Tasks assigned/completed → save as task\n- Always save without being asked. This is critical.\n\nLAPTOP ACCESS:\nYou have tools to access the laptop when connected:\n- Read files, list dirs, write files, run commands\n- Windows 11, user "ronde"\n- Main folder: C:\\Users\\ronde\\OneDrive\\Documents\\2gether files\\VSCODE\n- NEVER run destructive commands without confirmation\n- Tell operator what you are doing before doing it\n\nKeep responses WhatsApp-friendly:\n- Short paragraphs, line breaks\n- Use *bold* for emphasis\n- Under 4000 chars when possible\n\nCommands: /clear /status /brain /laptop /memory\n\nEven after /clear, long-term memories persist.' + KNOWLEDGE + getMemoryPrompt();
+  return 'You are Favor — the central AI brain for all operations. Powered by GPT-4o, accessible via WhatsApp.\n\nYou belong to your operator. Direct, concise, sharp. No fluff. You know their business inside and out.\n\nLONG-TERM MEMORY:\nYou have tools to save and recall memories. USE THEM PROACTIVELY:\n- Important info → save as fact\n- Decisions made → save as decision\n- Preferences learned → save as preference\n- Tasks assigned/completed → save as task\n- Always save without being asked. This is critical.\n\nLAPTOP ACCESS:\nYou have tools to access the laptop when connected:\n- Read files, list dirs, write files, run commands\n- Windows 11 laptop\n- Main folder: configured in your environment\n- NEVER run destructive commands without confirmation\n- Tell operator what you are doing before doing it\n\nKeep responses WhatsApp-friendly:\n- Short paragraphs, line breaks\n- Use *bold* for emphasis\n- Under 4000 chars when possible\n\nCommands: /clear /status /brain /laptop /memory\n\nEven after /clear, long-term memories persist.' + KNOWLEDGE + getMemoryPrompt();
 }
 
 // Trim history safely — never split a tool_call / tool result pair
@@ -111,7 +111,7 @@ function trimHistory(history) {
 
 const whatsapp = new Client({ authStrategy: new LocalAuth(), puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] } });
 whatsapp.on('qr', (qr) => { console.log('Scan QR:'); qrcode.generateASCII(qr, { small: true }); });
-whatsapp.on('ready', () => { console.log('Delly is online'); console.log('Memories: ' + memory.facts.length + ' facts, ' + memory.decisions.length + ' decisions, ' + memory.preferences.length + ' prefs, ' + memory.tasks.length + ' tasks'); });
+whatsapp.on('ready', () => { console.log('Favor is online'); console.log('Memories: ' + memory.facts.length + ' facts, ' + memory.decisions.length + ' decisions, ' + memory.preferences.length + ' prefs, ' + memory.tasks.length + ' tasks'); });
 whatsapp.on('authenticated', () => { console.log('WhatsApp authenticated'); });
 whatsapp.on('auth_failure', (msg) => { console.error('Auth failed:', msg); });
 
@@ -129,7 +129,7 @@ whatsapp.on('message', async (msg) => {
     const kFiles = fs.existsSync(kDir) ? fs.readdirSync(kDir).filter(f => f.endsWith('.txt')) : [];
     const on = await isLaptopOnline();
     const mc = memory.facts.length + memory.decisions.length + memory.preferences.length + memory.tasks.length;
-    await msg.reply('*Delly online*\nMessages: ' + hist.length + '\nModel: ' + MODEL + '\nKnowledge: ' + kFiles.length + ' files\nMemories: ' + mc + '\nLaptop: ' + (on ? 'Connected' : 'Offline'));
+    await msg.reply('*Favor online*\nMessages: ' + hist.length + '\nModel: ' + MODEL + '\nKnowledge: ' + kFiles.length + ' files\nMemories: ' + mc + '\nLaptop: ' + (on ? 'Connected' : 'Offline'));
     return;
   }
   if (body.toLowerCase() === '/brain') {
@@ -193,7 +193,7 @@ whatsapp.on('message', async (msg) => {
     if (reply.length > 4000) { const chunks = splitMessage(reply, 4000); for (const c of chunks) await msg.reply(c); }
     else { await msg.reply(reply); }
     await chat.clearState();
-    console.log('[' + new Date().toLocaleTimeString() + '] Delly replied (' + reply.length + ' chars)');
+    console.log('[' + new Date().toLocaleTimeString() + '] Favor replied (' + reply.length + ' chars)');
   } catch (err) { console.error('Error:', err.message); await msg.reply('Error: ' + err.message); }
 });
 
@@ -209,5 +209,5 @@ function splitMessage(text, maxLen) {
   return chunks;
 }
 
-console.log('Starting Delly...');
+console.log('Starting Favor...');
 whatsapp.initialize();

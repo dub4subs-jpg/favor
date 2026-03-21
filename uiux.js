@@ -1,5 +1,5 @@
 /**
- * UI/UX Pro Max — Design System Generator for DellV2
+ * UI/UX Pro Max — Design System Generator for Favor
  * Ported from https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
  *
  * BM25 search engine + reasoning engine that generates complete design system

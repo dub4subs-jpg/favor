@@ -1,5 +1,5 @@
 [Unit]
-Description=DellV2 — Favor AI Companion
+Description=Favor AI Companion
 After=network-online.target
 Wants=network-online.target
 

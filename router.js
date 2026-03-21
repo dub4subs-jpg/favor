@@ -1,4 +1,4 @@
-// router.js — Decision Router + Multi-Brain Orchestration Layer for DellV2
+// router.js — Decision Router + Multi-Brain Orchestration Layer for Favor
 // Classifies each request and routes to the most efficient execution path
 
 const { execFile, spawn } = require('child_process');
@@ -117,7 +117,7 @@ const GEMINI_KEYWORDS = [
 function keywordOverride(message) {
   const lower = message.toLowerCase();
   // Catch "ask/tell/message/text/ping [name]" patterns — always needs send_message tool
-  if (/\b(ask|tell|message|text|ping|remind|update|notify|email)\s+[a-z]{2,}/.test(lower) && !/\b(me|you|yourself|dell)\b/.test(lower.match(/\b(?:ask|tell|message|text|ping|remind|update|notify|email)\s+([a-z]+)/)?.[1] || '')) {
+  if (/\b(ask|tell|message|text|ping|remind|update|notify|email)\s+[a-z]{2,}/.test(lower) && !/\b(me|you|yourself)\b/.test(lower.match(/\b(?:ask|tell|message|text|ping|remind|update|notify|email)\s+([a-z]+)/)?.[1] || '')) {
     return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: messaging action detected', classifier_ms: 0 };
   }
   if (TOOL_KEYWORDS.some(kw => lower.includes(kw))) {

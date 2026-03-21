@@ -24,7 +24,7 @@ function defaultState() {
     active_tasks: [],
     recent_decisions: [],
     current_agents: {
-      dellv2: { status: 'unknown', last_seen: null, current_action: null },
+      bot: { status: 'unknown', last_seen: null, current_action: null },
       claude: { status: 'unknown', last_seen: null, current_action: null }
     },
     open_blockers: [],
@@ -124,7 +124,7 @@ ${state.current_objective || 'None set'}
 ## Agent Status
 | Agent | Status | Last Seen | Current Action |
 |-------|--------|-----------|----------------|
-| DellV2 | ${state.current_agents.dellv2.status} | ${state.current_agents.dellv2.last_seen || 'never'} | ${state.current_agents.dellv2.current_action || 'idle'} |
+| Bot | ${state.current_agents.bot.status} | ${state.current_agents.bot.last_seen || 'never'} | ${state.current_agents.bot.current_action || 'idle'} |
 | Claude | ${state.current_agents.claude.status} | ${state.current_agents.claude.last_seen || 'never'} | ${state.current_agents.claude.current_action || 'idle'} |
 
 ## Active Tasks

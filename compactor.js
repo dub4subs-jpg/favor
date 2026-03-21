@@ -1,6 +1,6 @@
 // ─── FAVOR SMART COMPACTION ───
 // Instead of just dropping old messages, summarizes them into context blocks
-// so Delly never truly forgets a conversation
+// so the bot never truly forgets a conversation
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 

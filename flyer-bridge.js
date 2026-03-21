@@ -1,9 +1,9 @@
 // ============================================================
-// Flyer Bridge — connects DellV2 to the HE Flyer Bot
+// Flyer Bridge — connects the bot to the HE Flyer Bot
 // ============================================================
 // No AI API calls. Just Drive + Puppeteer + local rendering.
 //
-// Usage from DellV2 tools:
+// Usage from bot tools:
 //   generate_flyer  → builds flyer from product data
 //   save_to_drive   → saves an image sent via WhatsApp to a Drive folder
 

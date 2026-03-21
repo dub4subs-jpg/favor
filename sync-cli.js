@@ -3,7 +3,7 @@
 
 /**
  * sync-cli.js — CLI interface for the Memory Sync Bot
- * Used by Claude Code to read/write shared state with DellV2.
+ * Used by Claude Code to read/write shared state with the bot.
  *
  * Usage:
  *   node sync-cli.js status          — Show current state summary
@@ -27,7 +27,7 @@ switch (cmd) {
     const events = syncBot.readRecentEvents(5);
     console.log('=== Memory Sync Status ===');
     console.log(`Objective: ${state.current_objective}`);
-    console.log(`DellV2: ${state.current_agents.dellv2.status} — ${state.current_agents.dellv2.current_action || 'idle'}`);
+    console.log(`Bot: ${state.current_agents.bot.status} — ${state.current_agents.bot.current_action || 'idle'}`);
     console.log(`Claude: ${state.current_agents.claude.status} — ${state.current_agents.claude.current_action || 'idle'}`);
     console.log(`Active tasks: ${(state.active_tasks || []).filter(t => t.status !== 'done').length}`);
     console.log(`Blockers: ${(state.open_blockers || []).length}`);

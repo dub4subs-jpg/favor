@@ -390,9 +390,9 @@ const TOOLS = [
   oaiTool('topic_create', 'Create a new conversation topic/branch.', { type: 'object', properties: { name: { type: 'string', description: 'Topic name' } }, required: ['name'] }),
   oaiTool('topic_switch', 'Switch to an existing topic by ID.', { type: 'object', properties: { id: { type: 'number', description: 'Topic ID to switch to' } }, required: ['id'] }),
   oaiTool('topic_list', 'List all conversation topics for the current contact.', { type: 'object', properties: {} }),
-  oaiTool('send_email', 'Send an email from rondell.n.daniels@gmail.com via Gmail API. Can include a PDF attachment. Use for invoices, follow-ups, etc.', { type: 'object', properties: { to: { type: 'string', description: 'Recipient email address' }, subject: { type: 'string', description: 'Email subject line' }, body: { type: 'string', description: 'Email body text' }, attachment: { type: 'string', description: 'Optional absolute path to a file to attach (e.g. /tmp/inv101.pdf)' } }, required: ['to', 'subject', 'body'] }),
-  oaiTool('send_message', 'Proactively send a message to a contact.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +13057667307)' }, message: { type: 'string' } }, required: ['contact', 'message'] }),
-  oaiTool('send_image', 'Forward the last received image to a contact, with an optional caption.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +19545041943)' }, caption: { type: 'string', description: 'Optional caption to send with the image' } }, required: ['contact'] }),
+  oaiTool('send_email', 'Send an email via Gmail API. Can include a PDF attachment. Use for invoices, follow-ups, etc.', { type: 'object', properties: { to: { type: 'string', description: 'Recipient email address' }, subject: { type: 'string', description: 'Email subject line' }, body: { type: 'string', description: 'Email body text' }, attachment: { type: 'string', description: 'Optional absolute path to a file to attach (e.g. /tmp/inv101.pdf)' } }, required: ['to', 'subject', 'body'] }),
+  oaiTool('send_message', 'Proactively send a message to a contact.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +1XXXXXXXXXX)' }, message: { type: 'string' } }, required: ['contact', 'message'] }),
+  oaiTool('send_image', 'Forward the last received image to a contact, with an optional caption.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +1XXXXXXXXXX)' }, caption: { type: 'string', description: 'Optional caption to send with the image' } }, required: ['contact'] }),
   // ─── VAULT TOOLS ───
   oaiTool('vault_save', 'Save sensitive info (card, address, ID, personal details) to the encrypted vault. For cards: include number, exp, cvv, name, zip. For addresses: include full address fields. For identity: include name, dob, email, phone, passport, etc.', { type: 'object', properties: { label: { type: 'string', description: 'Unique key e.g. "visa_card", "home_address", "passport"' }, category: { type: 'string', enum: ['card', 'address', 'identity', 'general'], description: 'Type of data' }, data: { type: 'object', description: 'The data to store (will be encrypted)' } }, required: ['label', 'category', 'data'] }),
   oaiTool('vault_get', 'Retrieve decrypted data from the vault by label.', { type: 'object', properties: { label: { type: 'string', description: 'The vault entry label' } }, required: ['label'] }),
@@ -419,7 +419,7 @@ const TOOLS = [
   // ─── LEARNING TOOLS ───
   oaiTool('learn_from_url', 'Read a webpage/article/course page and extract techniques, principles, and knowledge. Saves learnings to operator profile. Use when operator says "learn this", "study this", or shares an article/course URL to learn from.', { type: 'object', properties: { url: { type: 'string', description: 'URL to learn from' }, context: { type: 'string', description: 'What to focus on or how to apply it' } }, required: ['url'] }),
   // ─── KNOWLEDGE SEARCH ───
-  oaiTool('knowledge_search', 'Search Dell\'s knowledge base files for relevant information. Uses fast keyword search (BM25) across all indexed markdown docs. Use when you need to look up skills, procedures, product info, compliance rules, or any documented knowledge.', {
+  oaiTool('knowledge_search', 'Search the knowledge base files for relevant information. Uses fast keyword search (BM25) across all indexed markdown docs. Use when you need to look up skills, procedures, product info, compliance rules, or any documented knowledge.', {
     type: 'object',
     properties: {
       query: { type: 'string', description: 'Search query (keywords work best, e.g. "barcode creation", "florida compliance", "laptop tools")' },
@@ -547,10 +547,10 @@ async function captureScreenshotBuffer() {
     if (!envRes.ok) return null;
     const [userProfile, tempDir] = envRes.output.trim().split('|');
 
-    const dayDir = `${userProfile}\\DellV2\\Screenshots\\${dateStr}`;
+    const dayDir = `${userProfile}\\Favor\\Screenshots\\${dateStr}`;
     const remotePath = `${dayDir}\\${timeStr}.png`;
-    const scriptPath = `${tempDir}\\dell_shot.ps1`;
-    const doneFlag = `${tempDir}\\dell_shot_done.txt`;
+    const scriptPath = `${tempDir}\\favor_shot.ps1`;
+    const doneFlag = `${tempDir}\\favor_shot_done.txt`;
 
     await laptopExec(`powershell -Command "New-Item -ItemType Directory -Force -Path '${dayDir}' | Out-Null; Remove-Item '${doneFlag}' -Force -ErrorAction SilentlyContinue; Remove-Item '${doneFlag}.err' -Force -ErrorAction SilentlyContinue"`);
 
@@ -584,7 +584,7 @@ async function captureScreenshotBuffer() {
     const writeResult = await laptopExec(`powershell -Command "[IO.File]::WriteAllBytes('${scriptPath}', [Convert]::FromBase64String('${psBase64}')); Write-Output OK"`);
     if (!writeResult.output.includes('OK')) return null;
 
-    const schedCmd = `schtasks /create /tn "DellShot" /tr "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File \\"${scriptPath}\\"" /sc once /st 00:00 /f /it && schtasks /run /tn "DellShot" && schtasks /delete /tn "DellShot" /f`;
+    const schedCmd = `schtasks /create /tn "FavorShot" /tr "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File \\"${scriptPath}\\"" /sc once /st 00:00 /f /it && schtasks /run /tn "FavorShot" && schtasks /delete /tn "FavorShot" /f`;
     const capture = await laptopExec(schedCmd);
     if (!capture.ok) return null;
 
@@ -624,7 +624,7 @@ async function executeTool(name, input, context = {}) {
       const result = await captureScreenshotBuffer();
       if (!result) return 'Screenshot failed — laptop may be offline or capture timed out.';
       try {
-        await sock.sendMessage(context.contact, { image: result.buffer, caption: `Screenshot — ${result.dateStr} ${result.timeStr.replace(/-/g, ':')} — saved to DellV2/Screenshots/${result.dateStr}/` });
+        await sock.sendMessage(context.contact, { image: result.buffer, caption: `Screenshot — ${result.dateStr} ${result.timeStr.replace(/-/g, ':')} — saved to Favor/Screenshots/${result.dateStr}/` });
         return '__IMAGE_SENT__';
       } catch (e) {
         return 'Screenshot captured but could not send: ' + e.message;
@@ -634,18 +634,18 @@ async function executeTool(name, input, context = {}) {
       const app = input.app.replace(/'/g, "''");
       // Use schtasks instead of PsExec — PsExec -i 1 doesn't give full GPU/display access,
       // causing heavy apps (Adobe, etc.) to freeze on splash screens
-      const create = await laptopExec(`schtasks /Create /TN "DellOpenApp" /TR "'${app}'" /SC ONCE /ST 00:00 /F /RL HIGHEST`);
+      const create = await laptopExec(`schtasks /Create /TN "FavorOpenApp" /TR "'${app}'" /SC ONCE /ST 00:00 /F /RL HIGHEST`);
       if (!create.ok) return 'Error creating launch task: ' + create.output;
-      const run = await laptopExec(`schtasks /Run /TN "DellOpenApp"`);
+      const run = await laptopExec(`schtasks /Run /TN "FavorOpenApp"`);
       if (!run.ok) return 'Error launching app: ' + run.output;
       return `Launched "${input.app}" on the laptop desktop.`;
     }
     case 'laptop_open_url': {
       const url = input.url.replace(/'/g, "''");
       // Use schtasks for URL opening too — consistent with app launching
-      const create = await laptopExec(`schtasks /Create /TN "DellOpenApp" /TR "cmd /c start '' '${url}'" /SC ONCE /ST 00:00 /F /RL HIGHEST`);
+      const create = await laptopExec(`schtasks /Create /TN "FavorOpenApp" /TR "cmd /c start '' '${url}'" /SC ONCE /ST 00:00 /F /RL HIGHEST`);
       if (!create.ok) return 'Error creating launch task: ' + create.output;
-      const run = await laptopExec(`schtasks /Run /TN "DellOpenApp"`);
+      const run = await laptopExec(`schtasks /Run /TN "FavorOpenApp"`);
       if (!run.ok) return 'Error opening URL: ' + run.output;
       return `Opened ${input.url} on the laptop browser.`;
     }
@@ -1102,7 +1102,7 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
         const n = input.num_results || 5;
         const query = input.query.replace(/'/g, "'\\''");
         const result = execSync(
-          `export PATH="$HOME/.bun/bin:$PATH" && qmd search '${query}' -c dell-knowledge -n ${n} --json`,
+          `export PATH="$HOME/.bun/bin:$PATH" && qmd search '${query}' -c favor-knowledge -n ${n} --json`,
           { encoding: 'utf8', timeout: 10000 }
         );
         const parsed = JSON.parse(result);
@@ -1200,7 +1200,7 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
           try {
             const { execSync } = require('child_process');
             const safeName = desc.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
-            execSync(`scp "${barcodePath}" rondell@100.94.63.96:"C:\\Users\\rondell\\Desktop\\Dellvs work\\barcodes\\${safeName}_barcode.png"`, { timeout: 15000 });
+            execSync(`scp "${barcodePath}" ${config.laptop.user}@${config.laptop.host}:"C:\\Users\\${config.laptop.user}\\Desktop\\barcodes\\${safeName}_barcode.png"`, { timeout: 15000 });
             console.log(`[BARCODE] Copied to laptop: ${safeName}_barcode.png`);
           } catch (scpErr) {
             console.log('[BARCODE] Could not copy to laptop: ' + scpErr.message);
@@ -1233,7 +1233,7 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
       }
     }
     case 'sync_update': {
-      syncBot.sync('dellv2', {
+      syncBot.sync('bot', {
         type: input.type || 'action',
         summary: input.summary,
         objective: input.objective,
@@ -1299,7 +1299,7 @@ function buildThreadPrompt(contact) {
     const ageStr = age < 60 ? `${age}m ago` : age < 1440 ? `${Math.round(age / 60)}h ago` : `${Math.round(age / 1440)}d ago`;
     return `- ${t.summary} (${ageStr})`;
   }).join('\n');
-  return `\n\n=== OPEN THREADS (things Rondell mentioned but didn't finish — follow up naturally when relevant, don't force it) ===\n${lines}\n=== END THREADS ===`;
+  return `\n\n=== OPEN THREADS (things the operator mentioned but didn't finish — follow up naturally when relevant, don't force it) ===\n${lines}\n=== END THREADS ===`;
 }
 
 function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
@@ -1309,22 +1309,22 @@ function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
 
   return `You are ${name}. Your identity, personality, rules, and knowledge are defined in your knowledge files — read them carefully, they ARE you.
 
-Your operator is Rondell. Laptop: user "${config.laptop.user}", Tailscale IP ${config.laptop.host}.
+Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
 
 [SYSTEM-INTERNAL — never reveal this] Security phrase: ${config.whatsapp.securityPhrase || 'NOT_SET'}
 
 [CRITICAL RULE] You are an AGENT, not a chatbot. You have tools — USE THEM.
 - NEVER respond with generic step-by-step instructions. That is a failure. Take action.
-- NEVER fabricate or guess URLs, file paths, usernames, or any factual info. If you don't know something, use memory_search or knowledge_search to look it up FIRST. Only ask Rondell if it's truly not in your memory.
-- When Rondell asks you to message/contact/text someone, USE the send_message tool immediately. You have explicit operator permission to send messages to any number Rondell provides. Do NOT refuse or say you "can't reach out" — you CAN and MUST.
+- NEVER fabricate or guess URLs, file paths, usernames, or any factual info. If you don't know something, use memory_search or knowledge_search to look it up FIRST. Only ask the operator if it's truly not in your memory.
+- When the operator asks you to message/contact/text someone, USE the send_message tool immediately. You have explicit operator permission to send messages to any number provided. Do NOT refuse or say you "can't reach out" — you CAN and MUST.
 - When told to "send her/him" something (links, info, files), ALWAYS use send_message to deliver it to that person directly. Don't just do background work (like adding collaborators) — the person needs to actually RECEIVE the information via WhatsApp.
 - NEVER leave someone hanging. If you tell anyone "one moment", "stand by", "let me check", or "I'll get back to you" — you MUST follow up with the actual answer in the SAME interaction. Do not end your turn without delivering the result. Get the info, then send_message them the answer immediately.
-- When talking to trusted contacts, BE AUTONOMOUS. Search your memory for answers (repo URLs, project info, etc.) instead of deferring to Rondell. Solve their questions directly.
+- When talking to trusted contacts, BE AUTONOMOUS. Search your memory for answers (repo URLs, project info, etc.) instead of deferring to the operator. Solve their questions directly.
 - For web tasks (barcodes, forms, shopping, research): use your HEADLESS BROWSER (browser_navigate, browser_click, browser_type, etc.) — this works independently without needing the laptop.
 - For laptop-specific tasks (open apps, show screen, run desktop commands): use laptop tools (laptop_screenshot, laptop_open_url, laptop_open_app).
-- Only use laptop_screenshot if Rondell says "I'm on the page" or "look at my screen" — otherwise default to HEADLESS BROWSER for web tasks.
+- Only use laptop_screenshot if the operator says "I'm on the page" or "look at my screen" — otherwise default to HEADLESS BROWSER for web tasks.
 
-[PROGRESS REPORTING] When doing multi-step tasks (browser automation, file operations, etc.), include a short text update WITH your tool calls to keep Rondell informed. Example: "Logging into GS1 now..." or "Form filled, clicking Save and Continue..." — these messages get sent to him in real time. Don't be silent during long tasks.
+[PROGRESS REPORTING] When doing multi-step tasks (browser automation, file operations, etc.), include a short text update WITH your tool calls to keep the operator informed. Example: "Logging into GS1 now..." or "Form filled, clicking Save and Continue..." — these messages get sent in real time. Don't be silent during long tasks.
 
 [TOOL MEMORY] When a tool sequence works successfully (e.g., browser login flow, form fill pattern, file operation), remember it and reuse the same approach next time. Don't re-discover what already works — use your memory tools to save successful patterns. Only change your approach if you find something faster or more efficient.
 
@@ -1520,9 +1520,9 @@ async function updateOperatorProfile(newInsights) {
   try { existing = fs.readFileSync(profilePath, 'utf8'); } catch (_) {}
 
   if (!existing) {
-    existing = `# Operator Profile — Rondell
+    existing = `# Operator Profile
 ## Learned from screen observation, video courses, and interactions.
-## Dell uses this to understand your workflow, design style, and preferences.
+## The bot uses this to understand your workflow, design style, and preferences.
 
 ### Workflow & Habits\n\n### Design Style\n\n### Tools & Software\n\n### Skills & Techniques\n\n### Business Context\n`;
   }
@@ -1537,7 +1537,7 @@ async function updateOperatorProfile(newInsights) {
 async function screenAwarenessLoop() {
   if (!screenAwarenessActive) return;
   if (screenTickInProgress) return;
-  const operatorJid = (config.whatsapp.operatorNumber || '13057667307').replace('+', '') + '@s.whatsapp.net';
+  const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
   if ((Date.now() - screenStartTime) >= SCREEN_CHECKIN_AFTER && !screenAwaitingContinue) {
     screenAwaitingContinue = true;
@@ -1595,7 +1595,7 @@ async function analyzeScreenBatch() {
   const frames = [...screenFrameBuffer];
   screenFrameBuffer = [];
 
-  const operatorJid = (config.whatsapp.operatorNumber || '13057667307').replace('+', '') + '@s.whatsapp.net';
+  const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
   // Build multi-frame message — GPT-4o sees all frames in sequence
   const imageBlocks = [];
@@ -1612,7 +1612,7 @@ async function analyzeScreenBatch() {
     messages: [
       {
         role: 'system',
-        content: `You are DellV2, monitoring your operator Rondell's screen in real-time. You receive ${SCREEN_FRAMES_PER_BATCH} sequential screenshots taken 2 seconds apart — like a filmstrip.
+        content: `You are Favor, monitoring your operator's screen in real-time. You receive ${SCREEN_FRAMES_PER_BATCH} sequential screenshots taken 2 seconds apart — like a filmstrip.
 
 You have TWO jobs:
 
@@ -1700,7 +1700,7 @@ async function startWhatsApp() {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     logger,
-    browser: ['DellV2', 'Chrome', '125.0'],
+    browser: ['Favor', 'Chrome', '125.0'],
     markOnlineOnConnect: false,
     syncFullHistory: false
   });
@@ -1742,23 +1742,23 @@ async function startWhatsApp() {
       db.audit('ready', `WhatsApp connected (Baileys). Model: ${config.model.id}`);
       cronEngine.start();
 
-      // Sync: DellV2 online
-      syncBot.sync('dellv2', {
+      // Sync: Bot online
+      syncBot.sync('bot', {
         type: 'connection',
-        summary: `DellV2 online. Model: ${config.model.id}. Memories: ${counts.facts}F/${counts.decisions}D/${counts.preferences}P. Crons: ${cronCount}`,
+        summary: `Bot online. Model: ${config.model.id}. Memories: ${counts.facts}F/${counts.decisions}D/${counts.preferences}P. Crons: ${cronCount}`,
         status: 'success',
         objective: 'Operational — awaiting user messages',
-        fact: `DellV2 running model ${config.model.id}`,
+        fact: `Bot running model ${config.model.id}`,
         fact_type: 'session'
       });
-      syncBot.createCheckpoint(syncBot.loadState(), 'dellv2_connected');
+      syncBot.createCheckpoint(syncBot.loadState(), 'bot_connected');
 
       // Send startup confirmation to operator (only once per process)
       if (!global._startupMessageSent) {
         global._startupMessageSent = true;
-        const operatorJid = '13057667307@s.whatsapp.net';
+        const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
         try {
-          await sock.sendMessage(operatorJid, { text: 'DellV2 is online. Favor framework active.' });
+          await sock.sendMessage(operatorJid, { text: 'Favor is online.' });
           console.log('[FAVOR] Sent startup message to operator');
         } catch (e) {
           console.error('[FAVOR] Could not send startup message:', e.message);
@@ -1773,10 +1773,10 @@ async function startWhatsApp() {
       db.audit('disconnected', `status: ${statusCode}`);
       cronEngine.stop();
 
-      // Sync: DellV2 disconnected
-      syncBot.sync('dellv2', {
+      // Sync: Bot disconnected
+      syncBot.sync('bot', {
         type: 'connection',
-        summary: `DellV2 disconnected. Status: ${statusCode}`,
+        summary: `Bot disconnected. Status: ${statusCode}`,
         status: 'error',
         blocker: `WhatsApp disconnected (status ${statusCode})`
       });
@@ -1835,11 +1835,9 @@ async function startWhatsApp() {
 const lidToPhone = new Map();
 const phoneToLid = new Map();
 
-// Known LID mappings (learned from testing)
-lidToPhone.set('140419761483937', '13057667307');
-phoneToLid.set('13057667307', '140419761483937');
-lidToPhone.set('135734405120172', '17869691100');
-phoneToLid.set('17869691100', '135734405120172');
+// Known LID mappings (add your own from testing)
+// Example: lidToPhone.set('LID_NUMBER', 'PHONE_NUMBER');
+// Example: phoneToLid.set('PHONE_NUMBER', 'LID_NUMBER');
 
 function registerLidMapping(lidJid, phoneJid) {
   if (lidJid && phoneJid) {
@@ -2054,7 +2052,7 @@ async function handleMessage(msg) {
     const authKey = phone || jid; // use JID as fallback for unknown LIDs
     const textLower = (body || '').toLowerCase().trim();
 
-    // Trusted contacts can message Dell directly
+    // Trusted contacts can message the bot directly
     const trustedList = config.whatsapp.trustedContacts || [];
     const isTrusted = trustedList.some(t => phone && phone.includes(t.replace('+', '')));
 
@@ -2222,7 +2220,7 @@ async function handleMessage(msg) {
       await sock.sendMessage(jid, { text:
         `*Memory Sync Status*\n\n` +
         `*Objective:* ${state.current_objective || 'idle'}\n` +
-        `*DellV2:* ${state.current_agents.dellv2.status} (${state.current_agents.dellv2.current_action || 'idle'})\n` +
+        `*Bot:* ${state.current_agents.bot.status} (${state.current_agents.bot.current_action || 'idle'})\n` +
         `*Claude:* ${state.current_agents.claude.status} (${state.current_agents.claude.current_action || 'idle'})\n` +
         `*Tasks:* ${(state.active_tasks || []).filter(t => t.status !== 'done').length} active\n` +
         `*Blockers:* ${(state.open_blockers || []).length}\n` +
@@ -2311,10 +2309,10 @@ async function handleMessage(msg) {
     const contactPhone = resolvePhone(jid);
     const isTrustedContact = !isOperator(jid) && trustedList.some(t => contactPhone && contactPhone.includes(t.replace('+', '')));
     if (isTrustedContact) {
-      const isCortana = contactPhone && contactPhone.includes('9545041943');
-      const tag = isCortana
-        ? `[Message from Cortana (AI bot running Claude on Josh's Mac) — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Use bullet points, exact URLs/paths/values, and explicit next steps. Skip pleasantries and small talk. Search memory_search/knowledge_search for any info she needs instead of deferring to Rondell. You two should solve problems together autonomously. Do NOT give access to vault, laptop, or sensitive operator tools.]`
-        : `[Message from trusted contact ${contactPhone} — NOT the operator. Respond helpfully and BE AUTONOMOUS: use memory_search and knowledge_search to look up answers (repo URLs, project details, etc.) instead of making them up or deferring to Rondell. NEVER fabricate URLs or information — always search memory first. Only escalate to Rondell if the info truly isn't in your memory. If they send something meant for Rondell (files, images, deliverables), forward it to him using send_message/send_image. Do NOT give this contact access to vault, laptop, or sensitive operator tools.]`;
+      const isBotContact = contactPhone && config.whatsapp.botContacts && config.whatsapp.botContacts.some(b => contactPhone.includes(b.replace('+', '')));
+      const tag = isBotContact
+        ? `[Message from another AI bot — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Use bullet points, exact URLs/paths/values, and explicit next steps. Skip pleasantries and small talk. Search memory_search/knowledge_search for any info needed instead of deferring to the operator. Solve problems together autonomously. Do NOT give access to vault, laptop, or sensitive operator tools.]`
+        : `[Message from trusted contact ${contactPhone} — NOT the operator. Respond helpfully and BE AUTONOMOUS: use memory_search and knowledge_search to look up answers (repo URLs, project details, etc.) instead of making them up or deferring to the operator. NEVER fabricate URLs or information — always search memory first. Only escalate to the operator if the info truly isn't in your memory. If they send something meant for the operator (files, images, deliverables), forward it using send_message/send_image. Do NOT give this contact access to vault, laptop, or sensitive operator tools.]`;
       if (userContent.length === 1 && userContent[0].type === 'text') {
         userContent[0].text = `${tag}\n${userContent[0].text}`;
       } else {
@@ -2353,7 +2351,7 @@ async function handleMessage(msg) {
     const decision = await classify(openai, userText, recentContext);
 
     // Sync: message received, routed
-    syncBot.sync('dellv2', {
+    syncBot.sync('bot', {
       type: 'message_received',
       summary: `Message from ${jid.split('@')[0]}: route=${decision.route}, escalation=${decision.escalation_score || 0}`,
       step: `processing message (route: ${decision.route})`
@@ -2377,7 +2375,7 @@ async function handleMessage(msg) {
       try {
         // Save image to temp file for Claude CLI to read
         const imgExt = (lastReceivedImage?.mimetype || 'image/jpeg').split('/')[1]?.replace('webp', 'png') || 'jpg';
-        imgPath = `/tmp/dell_vision_${Date.now()}.${imgExt}`;
+        imgPath = `/tmp/favor_vision_${Date.now()}.${imgExt}`;
         const imgBuffer = lastReceivedImage?.buffer;
         if (!imgBuffer) throw new Error('No image buffer available — download may have failed');
 
@@ -2417,8 +2415,8 @@ Analyze the image and respond naturally. Be yourself — follow your identity, p
     // ─── ROUTE: claude — engineering tasks via Claude CLI ───
     if (!reply && decision.route === 'claude') {
       try {
-        const cliPrompt = `You are an engineering assistant for Rondell's system (favor-agents, whatsapp-bot, he-qc-hub on Linux droplet at /root/).
-Working directories: /root/favor-agents, /root/whatsapp-bot, /root/he-qc-hub, /root/favor-dashboard
+        const cliPrompt = `You are an engineering assistant for the operator's system.
+Working directory: /root/favor
 Task: ${userText}
 Be concise. Return your analysis/solution directly.`;
         const cliResult = await runClaudeCLI(cliPrompt);
@@ -2449,7 +2447,7 @@ Be concise. Return your analysis/solution directly.`;
 You can take actions via Bash commands:
 - Send WhatsApp message: curl -s -X POST http://localhost:3099/send -H 'Content-Type: application/json' -d '{"to":"+1XXXXXXXXXX","message":"your message"}'
 - Send email: python3 /root/send-gmail.py <to> <subject> <body> [attachment]
-- Search Dell memory: curl -s http://localhost:3099/memory-search?q=query (if available)
+- Search bot memory: curl -s http://localhost:3099/memory-search?q=query (if available)
 - Run server commands: any bash command
 When you need to message someone, USE these tools. Do NOT say you can't send messages.
 
@@ -2470,7 +2468,7 @@ Respond to the latest message. Be yourself — follow your identity, personality
     // ─── ROUTE: gemini — large document analysis via Gemini ───
     if (!reply && decision.route === 'gemini') {
       try {
-        const geminiPrompt = `You are an analyst for Rondell's personal AI assistant (DellV2). Analyze the following request thoroughly.
+        const geminiPrompt = `You are an analyst for the Favor AI assistant. Analyze the following request thoroughly.
 
 Context from recent conversation: ${recentContext.slice(-500)}
 
@@ -2489,7 +2487,7 @@ Provide a detailed, well-structured analysis. Use markdown formatting.`;
     // ─── ROUTE: kimi — structured artifact production via Kimi ───
     if (!reply && decision.route === 'kimi') {
       try {
-        const kimiPrompt = `Task from Rondell's AI assistant (DellV2):
+        const kimiPrompt = `Task from the Favor AI assistant:
 
 ${userText}
 
@@ -2679,7 +2677,7 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
     console.log(`[${new Date().toLocaleTimeString()}] ${config.identity.name} replied (${reply.length} chars${topicId ? `, topic #${topicId}` : ''})`);
 
     // Sync: message handled successfully
-    syncBot.sync('dellv2', {
+    syncBot.sync('bot', {
       type: 'message_handled',
       summary: `Replied to ${jid.split('@')[0]} (${reply.length} chars, model: ${modelUsed}, tools: ${toolsUsed.length > 0 ? toolsUsed.join(',') : 'none'})`,
       status: 'success',
@@ -2696,7 +2694,7 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
     db.audit('error', err.message);
 
     // Sync: error
-    syncBot.sync('dellv2', {
+    syncBot.sync('bot', {
       type: 'error',
       priority: 'high',
       summary: `Error handling message: ${err.message}`,
@@ -2789,7 +2787,7 @@ process.stderr?.on('error', (e) => { if (e.code !== 'EPIPE') throw e; });
 // ─── LOCAL NOTIFICATION API ───
 // Allows favor-runner and other local processes to push WhatsApp messages
 const NOTIFY_PORT = 3099;
-const OPERATOR_JID = '13057667307@s.whatsapp.net';
+const OPERATOR_JID = (config.whatsapp?.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
 const notifyServer = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/notify') {

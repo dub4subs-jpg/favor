@@ -1,5 +1,5 @@
 /**
- * Dell Monitor — Watches favor.log for failure patterns and writes improvement notes
+ * Bot Monitor — Watches favor.log for failure patterns and writes improvement notes
  * Run: node monitor.js (or via pm2)
  * Outputs to /tmp/monitor-notes.log
  */
@@ -14,7 +14,7 @@ const KNOWLEDGE_DIR = path.join(__dirname, 'knowledge');
 const PATTERNS = [
   {
     name: 'selector_loop',
-    desc: 'Dell trying multiple selectors for the same element',
+    desc: 'Bot trying multiple selectors for the same element',
     regex: /\[TOOL\] browser_(click|evaluate|get_clickables).*?(Select|Assign|Yes|In Use|View Barcode)/,
     threshold: 3, // 3+ attempts = stuck
     window: 60000, // within 60 seconds
@@ -23,7 +23,7 @@ const PATTERNS = [
   },
   {
     name: 'wrong_tool',
-    desc: 'Dell using laptop tools when browser tools needed',
+    desc: 'Bot using laptop tools when browser tools needed',
     regex: /\[TOOL\] laptop_screenshot.*|laptop_status/,
     context_regex: /browser_|barcode|gs1|gtin|product/,
     threshold: 1,
@@ -54,12 +54,12 @@ const PATTERNS = [
   },
   {
     name: 'navigate_loop',
-    desc: 'Dell navigating to products page repeatedly without progress',
+    desc: 'Bot navigating to products page repeatedly without progress',
     regex: /\[BROWSER\] Navigated to:.*product\/my-products/,
     threshold: 3,
     window: 120000,
     hits: [],
-    advice: 'Dell navigated to products page 3+ times without making progress. Likely lost context of current step.'
+    advice: 'Bot navigated to products page 3+ times without making progress. Likely lost context of current step.'
   }
 ];
 
@@ -114,7 +114,7 @@ function trackStats(line) {
   if (line.includes('[TOOL-LOOP] Done')) stats.toolLoops++;
   if (line.includes('[COMPACT] Done')) stats.compactions++;
   if (line.includes('Classification failed')) stats.routerFailures++;
-  if (line.includes('DellV2 replied')) stats.replies++;
+  if (line.includes('replied')) stats.replies++;
 }
 
 // Write stats every 10 minutes
@@ -124,7 +124,7 @@ setInterval(() => {
 }, 600000);
 
 // Watch the log file
-note('🔍 Dell Monitor started — watching ' + LOG_PATH);
+note('🔍 Bot Monitor started — watching ' + LOG_PATH);
 
 let fileSize = 0;
 try { fileSize = fs.statSync(LOG_PATH).size; } catch(e) {}

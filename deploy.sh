@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy script for DellV2 — restarts via systemd user service
+# Deploy script for Favor — restarts via systemd user service
 set -e
 
 LOGFILE="/tmp/favor.log"

@@ -6,7 +6,7 @@
  *   node barcode-creator.js "Product 10PK" --packaging=case --qty=10
  *   node barcode-creator.js "Product" --dry-run --no-activate
  *
- * Can be called by Claude Code directly, or by Dell via subprocess.
+ * Can be called by Claude Code directly, or by the bot via subprocess.
  * Returns JSON to stdout with the result.
  */
 const puppeteer = require('puppeteer');

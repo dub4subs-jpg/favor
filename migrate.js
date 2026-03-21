@@ -58,7 +58,7 @@ for (const file of files) {
     if (trimmed.length < 10 || trimmed.length > 500) continue;
     if (trimmed.startsWith('```') || trimmed.match(/^\d{4}-\d{2}-\d{2}T/) || trimmed.startsWith('|')) continue;
 
-    if (trimmed.match(/owner|rondell|contact|phone|email|address|business|client|invoice|product|batch|compliance|florida|permit|thc/i)) {
+    if (trimmed.match(/owner|contact|phone|email|address|business|client|invoice|product|batch|compliance/i)) {
       favor.save('fact', trimmed);
       savedFacts++;
     }

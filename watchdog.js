@@ -1,5 +1,5 @@
 /**
- * watchdog.js — Health, Security & Self-Healing Monitor for DellV2/Favor WhatsApp Bot
+ * watchdog.js — Health, Security & Self-Healing Monitor for Favor WhatsApp Bot
  *
  * Monitors the favor-whatsapp pm2 process, WhatsApp connection health,
  * SQLite database integrity, credential file safety, and security threats.
@@ -29,7 +29,7 @@ const CONFIG = {
   credsBackup2: '/root/whatsapp-bot/auth-state/creds.json.bak',
   reportsDir: '/root/whatsapp-bot/watchdog-reports',
   notifyUrl: 'http://localhost:3099/notify',
-  operatorJid: '13057667307@s.whatsapp.net',
+  operatorJid: '', // Set from config.whatsapp.operatorNumber
 
   // Intervals (ms)
   healthInterval: 3 * 60 * 1000,       // 3 minutes
@@ -159,12 +159,12 @@ function markAlerted(alertType) {
   state.lastAlerts.set(alertType, Date.now());
 }
 
-// ONLY alert Rondell for things that CANNOT be auto-fixed or are security threats.
+// ONLY alert the operator for things that CANNOT be auto-fixed or are security threats.
 // Everything else is handled silently (auto-fix, auto-restart, or log-only).
 const CRITICAL_ALERTS = new Set([
   'creds_unrecoverable',   // creds broken, all backups failed — needs manual re-auth
   'db_corrupt',            // database corruption — needs manual recovery
-  'prompt_injection',      // someone trying to hack Dell
+  'prompt_injection',      // someone trying to hack the bot
   'brute_force',           // unusually high SSH attacks (beyond fail2ban)
 ]);
 
@@ -804,7 +804,7 @@ function selfImprove() {
 
 function init() {
   console.log('========================================');
-  console.log(' WATCHDOG — DellV2/Favor Security Guard');
+  console.log(' WATCHDOG — Favor Security Guard');
   console.log(`  Started: ${new Date().toISOString()}`);
   console.log(`  PID: ${process.pid}`);
   console.log('========================================');
