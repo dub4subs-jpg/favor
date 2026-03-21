@@ -13,6 +13,7 @@ const Browser = require('./browser');
 const VideoProcessor = require('./video');
 const BuildMode = require('./build-mode');
 const Guardian = require('./guardian');
+const SelfCheck = require('./selfcheck');
 const syncBot = require('./sync');
 const pino = require('pino');
 
@@ -89,6 +90,13 @@ console.log('[BUILD] Build mode initialized');
 // ─── GUARDIAN (QA / Watchdog) ───
 const guardian = new Guardian();
 console.log('[GUARDIAN] QA watchdog initialized');
+
+// ─── SELF-CHECK (health + sanitization) ───
+const selfCheck = new SelfCheck(db, config, {
+  botDir: __dirname,
+  dataDir: path.join(__dirname, 'data'),
+});
+console.log('[SELFCHECK] Health monitor initialized');
 // Backfill embeddings for any memories saved before semantic search was added
 setTimeout(() => backfillEmbeddings().catch(e => console.warn('[MEMORY] Backfill error:', e.message)), 5000);
 
@@ -519,6 +527,11 @@ const TOOLS = [
     required: ['target']
   }),
   oaiTool('guardian_report', 'Get the last Guardian scan report. Use after guardian_scan to retrieve formatted results, or when operator asks about the last scan.', {
+    type: 'object',
+    properties: {},
+  }),
+  // ─── SELF-CHECK TOOL ───
+  oaiTool('selfcheck', 'Run a self-check on the bot — checks process health, system resources, database integrity, config validity, security, and runs cleanup/sanitization. Use when operator asks for "self check", "health report", "system status", "clean up", or "sanitize".', {
     type: 'object',
     properties: {},
   }),
@@ -1251,6 +1264,16 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
       if (!last) return 'No previous Guardian scan found. Run guardian_scan first.';
       return `Last scan: ${last.scannedAt}\n\n${guardian.formatReport(last.report)}`;
     }
+    // ─── SELF-CHECK ───
+    case 'selfcheck': {
+      await sock.sendMessage(context.contact, { text: '🛡️ *Self-Check* — Running health checks and cleanup...' });
+      try {
+        const report = await selfCheck.runAll();
+        return selfCheck.formatReport(report);
+      } catch (e) {
+        return `Self-check failed: ${e.message}`;
+      }
+    }
     default: return 'Unknown tool: ' + name;
   }
 }
@@ -1757,6 +1780,44 @@ async function startWhatsApp() {
           console.log('[FAVOR] Sent startup message to operator');
         } catch (e) {
           console.error('[FAVOR] Could not send startup message:', e.message);
+        }
+
+        // ─── SELF-CHECK CRON (every 3 days at 5am EST / 10am UTC) ───
+        if (!global._selfCheckScheduled) {
+          global._selfCheckScheduled = true;
+          const scheduleNextSelfCheck = () => {
+            const now = new Date();
+            // Next 10:00 UTC (5am EST)
+            const next = new Date(now);
+            next.setUTCHours(10, 0, 0, 0);
+            if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+            // Advance to next 3-day boundary (days 1, 4, 7, 10... of month)
+            while ((next.getUTCDate() - 1) % 3 !== 0) {
+              next.setUTCDate(next.getUTCDate() + 1);
+            }
+            const delay = next.getTime() - now.getTime();
+            console.log(`[SELFCHECK] Next self-check: ${next.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
+            setTimeout(async () => {
+              try {
+                console.log('[SELFCHECK] Running scheduled self-check...');
+                const report = await selfCheck.runAll();
+                const formatted = selfCheck.formatReport(report);
+                const opJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
+                // Only alert operator if there are critical issues or warnings
+                if (report.critical.length > 0) {
+                  await sock.sendMessage(opJid, { text: `🔴 *Self-Check Alert*\n\n${formatted}` });
+                } else if (report.warnings.length > 0) {
+                  await sock.sendMessage(opJid, { text: formatted });
+                }
+                console.log(`[SELFCHECK] Complete: ${report.critical.length} critical, ${report.warnings.length} warnings, ${report.cleaned.length} cleanups`);
+                db.audit('selfcheck', `critical:${report.critical.length} warnings:${report.warnings.length} cleaned:${report.cleaned.length}`);
+              } catch (e) {
+                console.error('[SELFCHECK] Failed:', e.message);
+              }
+              scheduleNextSelfCheck(); // schedule the next one
+            }, delay);
+          };
+          scheduleNextSelfCheck();
         }
       }
     }

@@ -106,6 +106,12 @@ const GEMINI_KEYWORDS = [
   'competitor analysis', 'analyze this data', 'long document',
 ];
 
+const SELFCHECK_KEYWORDS = [
+  'self check', 'selfcheck', 'self-check', 'system check', 'system status',
+  'health report', 'run diagnostics', 'clean up', 'cleanup', 'sanitize',
+  'check yourself', 'how are you doing', 'are you healthy',
+];
+
 const GUARDIAN_KEYWORDS = [
   'run guardian', 'guardian scan', 'scan the project', 'scan this project',
   'health check', 'health scan', 'audit the code', 'audit this',
@@ -155,6 +161,9 @@ function keywordOverride(message) {
   }
   if (GUARDIAN_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: guardian scan', classifier_ms: 0 };
+  }
+  if (SELFCHECK_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: self-check', classifier_ms: 0 };
   }
   return null;
 }
