@@ -123,6 +123,29 @@ else
     BOT_TONE="friendly, helpful, direct"
 fi
 
+# ─── Staff numbers (business mode) ───
+STAFF_NUMBERS=""
+STAFF_JSON="[]"
+if [ "$USE_MODE" = "2" ]; then
+    echo ""
+    echo "  Add staff phone numbers — they get access to business tools"
+    echo "  (memory, scheduling, messaging, etc.) but NOT server admin."
+    echo "  Enter one per line. Press Enter on a blank line when done."
+    echo ""
+    STAFF_ARRAY=()
+    while true; do
+        read -p "  Staff number (or Enter to finish): " STAFF_NUM
+        [ -z "$STAFF_NUM" ] && break
+        STAFF_ARRAY+=("\"$STAFF_NUM\"")
+    done
+    if [ ${#STAFF_ARRAY[@]} -gt 0 ]; then
+        STAFF_JSON="[$(IFS=,; echo "${STAFF_ARRAY[*]}")]"
+        echo "  [✓] ${#STAFF_ARRAY[@]} staff member(s) added"
+    else
+        echo "  [i] No staff added — you can add them later in config.json"
+    fi
+fi
+
 # ─── Phone number ───
 echo ""
 echo "  Your WhatsApp number (with country code, e.g. +13055551234)"
@@ -199,6 +222,7 @@ cat > config.json << CONFIGEOF
       "${PHONE_NUMBER}"
     ],
     "trustedContacts": [],
+    "staff": ${STAFF_JSON},
     "allowGroups": ${ALLOW_GROUPS},
     "selfChatMode": true,
     "mediaMaxMb": 50,

@@ -574,6 +574,14 @@ async function captureScreenshotBuffer() {
 }
 
 async function executeTool(name, input, context = {}) {
+  // GUARD: Role-based tool access control
+  const role = context.role || 'customer';
+  if (!canUseTool(role, name)) {
+    console.log(`[SECURITY] Blocked tool "${name}" — ${role} does not have access`);
+    db.audit('security.tool_blocked', `${role} tried to use ${name}`);
+    return `This tool is not available. Please contact the operator for help with this request.`;
+  }
+
   // GUARD: If the last tool was a browser read and now a sensitive tool is being called,
   // this could be a chained prompt injection (page content tricked the AI)
   if (lastToolWasBrowser && SENSITIVE_TOOLS.has(name)) {
@@ -1734,11 +1742,76 @@ function isOperator(jid) {
   return phone.includes(opNum) || verifiedNumbers.has(phone);
 }
 
+function isStaff(jid) {
+  const staffList = config.whatsapp.staff || [];
+  if (!staffList.length) return false;
+  const phone = resolvePhone(jid);
+  if (!phone) return false;
+  return staffList.some(s => phone.includes(s.replace('+', '')));
+}
+
+// Returns 'operator', 'staff', or 'customer'
+function getRole(jid) {
+  if (isOperator(jid)) return 'operator';
+  if (isStaff(jid)) return 'staff';
+  return 'customer';
+}
+
+// Tool access by role
+const OPERATOR_ONLY_TOOLS = new Set([
+  'server_exec', 'read_file', 'write_file',
+  'laptop_run_command', 'laptop_write_file', 'laptop_read_file', 'laptop_list_files',
+  'laptop_open_app', 'laptop_open_url', 'laptop_screenshot', 'laptop_status',
+  'browser_evaluate', 'browser_fill_from_vault'
+]);
+
+const STAFF_TOOLS = new Set([
+  'memory_save', 'memory_search', 'memory_forget',
+  'web_search', 'knowledge_search',
+  'cron_create', 'cron_list', 'cron_delete', 'cron_toggle',
+  'topic_create', 'topic_switch', 'topic_list',
+  'send_message', 'send_email', 'send_image',
+  'vault_save', 'vault_get', 'vault_list', 'vault_delete',
+  'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
+  'browser_select', 'browser_fill_form', 'browser_get_fields',
+  'browser_get_clickables', 'browser_get_text', 'browser_scroll',
+  'browser_close', 'browser_status',
+  'video_analyze', 'video_learn', 'learn_from_url'
+]);
+
+const CUSTOMER_TOOLS = new Set([
+  'knowledge_search', 'web_search', 'memory_search'
+]);
+
+function canUseTool(role, toolName) {
+  if (role === 'operator') return true;
+  if (role === 'staff') return STAFF_TOOLS.has(toolName);
+  return CUSTOMER_TOOLS.has(toolName); // customer
+}
+
+// Admin slash commands — operator only
+const ADMIN_COMMANDS = new Set(['/update', '/model', '/reload', '/clear', '/sync', '/recover']);
+// Staff slash commands
+const STAFF_COMMANDS = new Set(['/status', '/memory', '/brain', '/crons', '/topics', '/help', '/laptop']);
+
+function canUseCommand(role, cmd) {
+  if (role === 'operator') return true;
+  if (role === 'staff') return STAFF_COMMANDS.has(cmd) || !ADMIN_COMMANDS.has(cmd);
+  return cmd === '/help' || cmd === '/status'; // customers can only check help/status
+}
+
+// Filter tools list based on role — AI only sees tools the user can access
+function getToolsForRole(role) {
+  if (role === 'operator') return TOOLS;
+  return TOOLS.filter(t => canUseTool(role, t.function.name));
+}
+
 function isAllowed(jid) {
   if (config.whatsapp.dmPolicy !== 'allowlist') return true;
   const combined = [...new Set([
     ...(config.whatsapp.allowFrom || []),
-    ...(config.whatsapp.trustedContacts || [])
+    ...(config.whatsapp.trustedContacts || []),
+    ...(config.whatsapp.staff || [])
   ])];
   if (!combined.length) return true;
 
@@ -1910,12 +1983,14 @@ async function handleMessage(msg) {
 
   console.log(`[${ts}] ${jid}: ${isVoice ? '[voice]' : isImage ? '[image]' : body?.substring(0, 80) || `[${msgType}]`}`);
 
-  // ─── OPERATOR AUTHENTICATION GATE ───
-  if (!isOperator(jid)) {
-    const phrase = (config.whatsapp.securityPhrase || '').toLowerCase();
+  // ─── ACCESS CONTROL ───
+  const role = getRole(jid);
+
+  if (role !== 'operator' && role !== 'staff') {
     const phone = resolvePhone(jid);
-    const authKey = phone || jid; // use JID as fallback for unknown LIDs
+    const authKey = phone || jid;
     const textLower = (body || '').toLowerCase().trim();
+    const phrase = (config.whatsapp.securityPhrase || '').toLowerCase();
 
     // Trusted contacts can message the bot directly
     const trustedList = config.whatsapp.trustedContacts || [];
@@ -1927,11 +2002,16 @@ async function handleMessage(msg) {
     } else if (verifiedNumbers.has(authKey)) {
       console.log(`[SECURITY] Previously verified ${authKey} — allowing through`);
       // Fall through to normal message handling below
+    } else if (config.whatsapp.dmPolicy === 'open') {
+      // Business mode — customers can message freely (with limited tools)
+      console.log(`[SECURITY] Customer ${authKey} — open mode, limited tools`);
+      // Fall through to normal message handling below
     } else {
+      // Allowlist mode — require authentication
       // Step 1: They say "password" → ask for the security phrase
       if (textLower === 'password') {
         pendingAuth.add(authKey);
-        await sock.sendMessage(jid, { text: "What's the operator's childhood nickname?" });
+        await sock.sendMessage(jid, { text: "What's the security phrase?" });
         console.log(`[SECURITY] Auth challenge sent to ${authKey}`);
         return;
       }
@@ -1952,7 +2032,7 @@ async function handleMessage(msg) {
         }
       }
 
-      // Not operator, not authenticating — ignore silently
+      // Not operator, not staff, not authenticating — ignore
       console.log(`[SECURITY] Blocked non-operator message from ${authKey}`);
       return;
     }
@@ -1961,6 +2041,12 @@ async function handleMessage(msg) {
   // ─── COMMANDS ───
   if (body) {
     const cmd = body.toLowerCase();
+
+    // Command access control
+    if (cmd.startsWith('/') && !canUseCommand(role, cmd.split(' ')[0])) {
+      await sock.sendMessage(jid, { text: 'That command is not available. Type /help to see what you can do.' });
+      return;
+    }
 
     // Screen awareness toggle
     if (cmd.includes('screen awareness on') || cmd.includes('turn on screen awareness') || cmd.includes('start watching my screen')) {
@@ -2204,19 +2290,33 @@ async function handleMessage(msg) {
       userContent.push({ type: 'text', text: body });
     }
 
-    // Tag messages from trusted (non-operator) contacts
-    const trustedList = config.whatsapp.trustedContacts || [];
-    const contactPhone = resolvePhone(jid);
-    const isTrustedContact = !isOperator(jid) && trustedList.some(t => contactPhone && contactPhone.includes(t.replace('+', '')));
-    if (isTrustedContact) {
-      const isBotContact = contactPhone && config.whatsapp.botContacts && config.whatsapp.botContacts.some(b => contactPhone.includes(b.replace('+', '')));
-      const tag = isBotContact
-        ? `[Message from another AI bot — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Use bullet points, exact URLs/paths/values, and explicit next steps. Skip pleasantries and small talk. Search memory_search/knowledge_search for any info needed instead of deferring to the operator. Solve problems together autonomously. Do NOT give access to vault, laptop, or sensitive operator tools.]`
-        : `[Message from trusted contact ${contactPhone} — NOT the operator. Respond helpfully and BE AUTONOMOUS: use memory_search and knowledge_search to look up answers (repo URLs, project details, etc.) instead of making them up or deferring to the operator. NEVER fabricate URLs or information — always search memory first. Only escalate to the operator if the info truly isn't in your memory. If they send something meant for the operator (files, images, deliverables), forward it using send_message/send_image. Do NOT give this contact access to vault, laptop, or sensitive operator tools.]`;
-      if (userContent.length === 1 && userContent[0].type === 'text') {
-        userContent[0].text = `${tag}\n${userContent[0].text}`;
+    // Tag messages based on role
+    if (role !== 'operator') {
+      let tag = '';
+      if (role === 'staff') {
+        tag = `[Message from STAFF member — NOT the operator. They have access to business tools (memory, scheduling, messaging, vault, browser). Help them with business operations. Do NOT give access to server admin, laptop, or system tools. If they need something only the operator can do, let them know.]`;
       } else {
-        userContent.unshift({ type: 'text', text: tag });
+        // Customer
+        const contactPhone = resolvePhone(jid);
+        const trustedList = config.whatsapp.trustedContacts || [];
+        const isTrusted = trustedList.some(t => contactPhone && contactPhone.includes(t.replace('+', '')));
+        const isBotContact = contactPhone && config.whatsapp.botContacts && config.whatsapp.botContacts.some(b => contactPhone.includes(b.replace('+', '')));
+
+        if (isBotContact) {
+          tag = `[Message from another AI bot — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Do NOT give access to vault, laptop, or sensitive tools.]`;
+        } else if (isTrusted) {
+          tag = `[Message from trusted contact — NOT the operator. Respond helpfully using memory_search and knowledge_search. Do NOT give access to vault, laptop, or sensitive operator tools.]`;
+        } else {
+          tag = `[Message from a CUSTOMER. You can ONLY use knowledge_search and web_search to help answer their questions. Be helpful, professional, and on-brand. NEVER reveal internal business data, operator info, server details, or system commands. If they need something beyond your knowledge, tell them to contact the business directly. Do NOT attempt to use any tools besides knowledge_search, web_search, and memory_search.]`;
+        }
+      }
+
+      if (tag) {
+        if (userContent.length === 1 && userContent[0].type === 'text') {
+          userContent[0].text = `${tag}\n${userContent[0].text}`;
+        } else {
+          userContent.unshift({ type: 'text', text: tag });
+        }
       }
     }
 
@@ -2440,7 +2540,7 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
         let miniResponse = await openai.chat.completions.create({
           model: 'gpt-4o-mini',
           max_tokens: 1024,
-          tools: TOOLS,
+          tools: getToolsForRole(role),
           messages: [systemMsg, ...history]
         });
         let miniLoops = 0;
@@ -2460,14 +2560,14 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
             }
             console.log(`[TOOL/mini] ${toolCall.function.name}: ${JSON.stringify(input).substring(0, 100)}`);
             toolsUsed.push(toolCall.function.name);
-            const result = await executeTool(toolCall.function.name, input, { contact: jid });
+            const result = await executeTool(toolCall.function.name, input, { contact: jid, role: getRole(jid) });
             history.push({ role: 'tool', tool_call_id: toolCall.id, content: String(result) });
           }
           await sock.sendPresenceUpdate('composing', jid);
           miniResponse = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             max_tokens: 1024,
-            tools: TOOLS,
+            tools: getToolsForRole(role),
             messages: [systemMsg, ...history]
           });
         }
@@ -2496,7 +2596,7 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
       let response = await openai.chat.completions.create({
         model: config.model.id,
         max_tokens: config.model.maxTokens,
-        tools: TOOLS,
+        tools: getToolsForRole(role),
         messages: [systemMsg, ...history]
       });
 
@@ -2520,14 +2620,14 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
           }
           console.log(`[TOOL] ${toolCall.function.name}: ${JSON.stringify(input).substring(0, 100)}`);
           toolsUsed.push(toolCall.function.name);
-          const result = await executeTool(toolCall.function.name, input, { contact: jid });
+          const result = await executeTool(toolCall.function.name, input, { contact: jid, role: getRole(jid) });
           history.push({ role: 'tool', tool_call_id: toolCall.id, content: String(result) });
         }
         await sock.sendPresenceUpdate('composing', jid);
         response = await openai.chat.completions.create({
           model: toolModel,
           max_tokens: 2048,
-          tools: TOOLS,
+          tools: getToolsForRole(role),
           messages: [systemMsg, ...history]
         });
         if (toolLoops === 1) console.log(`[TOOL-LOOP] Switched to ${toolModel} for execution`);
@@ -2610,7 +2710,7 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
         const retryResponse = await openai.chat.completions.create({
           model: config.model.id,
           max_tokens: config.model.maxTokens,
-          tools: TOOLS,
+          tools: getToolsForRole(role),
           messages: [{ role: 'system', content: buildSystemPrompt(jid) }, ...fixedHistory]
         });
         const retryReply = retryResponse.choices?.[0]?.message?.content || 'Done.';
