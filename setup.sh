@@ -314,6 +314,58 @@ echo "  Pick a secret word — say this to your bot to prove you're the owner."
 read -p "  Security phrase (default: changeme): " SEC_PHRASE
 SEC_PHRASE="${SEC_PHRASE:-changeme}"
 
+# ─── Alive Engine (proactive check-ins + memory callbacks) ───
+echo ""
+echo "  Your bot can message you on its own — a morning"
+echo "  hello, an evening recap, and reminders about"
+echo "  things you might've forgotten."
+echo ""
+read -p "  Want your bot to check in on you? (Y/n): " ALIVE_ENABLED
+ALIVE_ENABLED="${ALIVE_ENABLED:-Y}"
+
+if [ "$ALIVE_ENABLED" = "n" ] || [ "$ALIVE_ENABLED" = "N" ]; then
+    ALIVE_ON=false
+    ALIVE_TZ_OFFSET=-5
+    echo "  [i] No problem — you can turn this on later"
+else
+    ALIVE_ON=true
+    echo ""
+    echo "  What timezone are you in?"
+    echo ""
+    echo "    1) US Eastern (New York)"
+    echo "    2) US Central (Chicago)"
+    echo "    3) US Mountain (Denver)"
+    echo "    4) US Pacific (Los Angeles)"
+    echo "    5) UK / UTC (London)"
+    echo "    6) Central Europe (Paris/Berlin)"
+    echo "    7) India (Mumbai)"
+    echo "    8) Other"
+    echo ""
+    read -p "  Enter 1-8 (default: 1): " TZ_CHOICE
+    TZ_CHOICE="${TZ_CHOICE:-1}"
+
+    case "$TZ_CHOICE" in
+        1) ALIVE_TZ_OFFSET=-5 ;;
+        2) ALIVE_TZ_OFFSET=-6 ;;
+        3) ALIVE_TZ_OFFSET=-7 ;;
+        4) ALIVE_TZ_OFFSET=-8 ;;
+        5) ALIVE_TZ_OFFSET=0 ;;
+        6) ALIVE_TZ_OFFSET=1 ;;
+        7) ALIVE_TZ_OFFSET=5.5 ;;
+        8)
+            read -p "  Enter your UTC offset (e.g. -5, +3, +5.5): " ALIVE_TZ_OFFSET
+            ALIVE_TZ_OFFSET="${ALIVE_TZ_OFFSET:--5}"
+            ;;
+        *) ALIVE_TZ_OFFSET=-5 ;;
+    esac
+
+    echo "  [✓] Your bot will say good morning and check in each evening"
+fi
+
+ALIVE_MORNING="09:00"
+ALIVE_EVENING="21:00"
+ALIVE_CALLBACK=8
+
 # ─── Generate vault secret ───
 VAULT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
 
@@ -389,6 +441,13 @@ cat > config.json << CONFIGEOF
     "connectTimeout": 5000,
     "execTimeout": 15000
   },
+  "alive": {
+    "enabled": ${ALIVE_ON},
+    "morningCheckin": "${ALIVE_MORNING}",
+    "eveningCheckin": "${ALIVE_EVENING}",
+    "memoryCallbackHours": ${ALIVE_CALLBACK},
+    "timezoneOffsetHours": ${ALIVE_TZ_OFFSET}
+  },
   "screenAwareness": {
     "enabled": false,
     "intervalMs": 180000,
@@ -436,7 +495,7 @@ if [ "$OPENAI_KEY" != "YOUR_OPENAI_API_KEY" ] && [ -n "$USE_DESCRIPTION" ]; then
   "messages": [
     {
       "role": "system",
-      "content": "You are setting up a WhatsApp AI bot. The user described their use case. Generate a JSON response with these fields:\n\n1. tagline: A short catchy tagline for their bot (under 50 chars)\n2. tone: Comma-separated tone descriptors (e.g. 'friendly, professional, warm')\n3. personality: One word (companion, assistant, advisor, concierge, coach, expert)\n4. knowledge_files: Array of objects with 'filename' and 'content' — markdown knowledge files the bot should have. Create 2-4 files with real useful content based on their description. For business: include business info, services, FAQ. For personal: include relevant guides, preferences, goals.\n5. features: Array of strings — the most relevant bot features for their use case. Pick from: memory, scheduled_tasks, web_search, video_analysis, browser_automation, vault, voice_messages, image_analysis, email, laptop_remote, claude_code\n6. tips: Array of 3 short tips (one sentence each) for getting the most out of their bot\n\nRespond with ONLY valid JSON, no markdown."
+      "content": "You are setting up a WhatsApp AI bot. The user described their use case. Generate a JSON response with these fields:\n\n1. tagline: A short catchy tagline for their bot (under 50 chars)\n2. tone: Comma-separated tone descriptors (e.g. 'friendly, professional, warm')\n3. personality: One word (companion, assistant, advisor, concierge, coach, expert)\n4. knowledge_files: Array of objects with 'filename' and 'content' — markdown knowledge files the bot should have. Create 2-4 files with real useful content based on their description. For business: include business info, services, FAQ. For personal: include relevant guides, preferences, goals.\n5. features: Array of strings — the most relevant bot features for their use case. Pick from: memory, scheduled_tasks, web_search, video_analysis, browser_automation, vault, voice_messages, image_analysis, email, laptop_remote, claude_code, alive\n6. tips: Array of 3 short tips (one sentence each) for getting the most out of their bot\n\nRespond with ONLY valid JSON, no markdown."
     },
     {
       "role": "user",
@@ -510,7 +569,8 @@ AIPROMPTEOF
                 image_analysis: 'Vision — analyze photos and images',
                 email: 'Email — send emails and follow-ups',
                 laptop_remote: 'Laptop remote — control your computer via WhatsApp',
-                claude_code: 'Claude Code — engineering and coding tasks'
+                claude_code: 'Claude Code — engineering and coding tasks',
+                alive: 'Alive Engine — proactive morning/evening check-ins + memory callbacks'
             };
             if (d.features) {
                 d.features.forEach(f => {

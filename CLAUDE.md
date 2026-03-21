@@ -26,6 +26,7 @@ build-mode.js   — Claude Code CLI integration for building software projects
 guardian.js     — Unified security framework: code scanning + runtime guard
 guardian/       — Guardian QA engine (validators, discovery, regression, repair, reporter)
 selfcheck.js    — Automated health monitoring, cleanup, and sanitization
+alive.js        — Proactive personality engine (check-ins + memory callbacks)
 sync.js         — State sync between bot and external tools
 uiux.js         — UI/UX design system engine (161 industry rules)
 watchdog.js     — Health monitoring and auto-recovery
@@ -65,6 +66,29 @@ Unified security and QA framework with two modes:
 - API key leak detection: scans outgoing messages, auto-redacts keys
 - Anomaly detection and WhatsApp alerts
 - `guardian_status` — View current spend, request counts, alerts
+
+## Alive Engine
+Proactive personality system that makes Favor feel like a living companion instead of a passive text-in/text-out tool.
+
+**Features:**
+- **Morning check-in** — Warm daily greeting that references pending tasks, open threads, or recent memories
+- **Evening wind-down** — Casual end-of-day recap or simple check-in
+- **Memory callbacks** — Periodically resurfaces forgotten tasks, old decisions worth revisiting, or facts that connect to current work
+
+**Config** (`config.json`):
+```json
+"alive": {
+  "enabled": true,
+  "morningCheckin": "09:00",
+  "eveningCheckin": "21:00",
+  "memoryCallbackHours": 8,
+  "timezoneOffsetHours": -5
+}
+```
+
+Set `"enabled": false` to disable. Times are in local format — `timezoneOffsetHours` converts to UTC internally (default -5 = EST). Memory callbacks have a 7-day per-memory cooldown to avoid nagging. The AI can respond `SKIP` if there's nothing worth saying.
+
+**Cost:** ~$0.01-0.03/day (3 lightweight API calls with short prompts).
 
 ## Self-Check
 Automated health + cleanup running every 3 days at 5am EST:

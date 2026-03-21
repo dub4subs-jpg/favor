@@ -14,6 +14,7 @@ const VideoProcessor = require('./video');
 const BuildMode = require('./build-mode');
 const Guardian = require('./guardian');
 const SelfCheck = require('./selfcheck');
+const AliveEngine = require('./alive');
 const syncBot = require('./sync');
 const pino = require('pino');
 
@@ -113,6 +114,37 @@ const selfCheck = new SelfCheck(db, config, {
   dataDir: path.join(__dirname, 'data'),
 });
 console.log('[SELFCHECK] Health monitor initialized');
+
+// ─── ALIVE ENGINE (proactive check-ins + memory callbacks) ───
+let alive = null;
+if (config.alive?.enabled !== false) {
+  // Convert local time config to UTC hours (users set local times in config)
+  // Default: 9 AM / 9 PM morning/evening, 8h memory callbacks
+  const aliveConfig = config.alive || {};
+  const morningLocal = aliveConfig.morningCheckin || '09:00';
+  const eveningLocal = aliveConfig.eveningCheckin || '21:00';
+  const tzOffset = aliveConfig.timezoneOffsetHours ?? -5; // EST default
+
+  const toUTC = (localTime) => {
+    const [h, m] = localTime.split(':').map(Number);
+    return ((h - tzOffset) + 24) % 24;
+  };
+
+  alive = new AliveEngine(db, openai, {
+    modelId: config.model.id,
+    maxTokens: 300,
+    operatorContact: config.whatsapp.operatorNumber?.replace('+', '') || '',
+    botName: config.identity.name || 'Favor',
+    morningHourUTC: toUTC(morningLocal),
+    eveningHourUTC: toUTC(eveningLocal),
+    callbackIntervalHours: aliveConfig.memoryCallbackHours ?? 8,
+    buildSystemPrompt: (contact) => buildSystemPrompt(contact),
+  });
+  console.log('[ALIVE] Proactive personality engine loaded');
+} else {
+  console.log('[ALIVE] Disabled in config');
+}
+
 // Backfill embeddings for any memories saved before semantic search was added
 setTimeout(() => backfillEmbeddings().catch(e => console.warn('[MEMORY] Backfill error:', e.message)), 5000);
 
@@ -1779,9 +1811,16 @@ async function startWhatsApp() {
       console.log(`[FAVOR] Model: ${config.model.id}`);
       console.log(`[FAVOR] Memories: ${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T`);
       console.log(`[FAVOR] Active crons: ${cronCount}`);
-      console.log(`[FAVOR] Features: vision, voice, topics, crons, compaction, proactive, sync`);
+      console.log(`[FAVOR] Features: vision, voice, topics, crons, compaction, proactive, alive, sync`);
       db.audit('ready', `WhatsApp connected (Baileys). Model: ${config.model.id}`);
       cronEngine.start();
+
+      // ─── ALIVE ENGINE: connect + register crons ───
+      if (alive) {
+        alive.setSock(sock);
+        alive.ensureCrons();
+        console.log('[ALIVE] Connected to WhatsApp + crons registered');
+      }
 
       // Sync: Bot online
       syncBot.sync('bot', {
@@ -2144,6 +2183,16 @@ const cronEngine = new CronEngine(db, {
     let taskData;
     try { taskData = JSON.parse(cron.task); } catch (_) { taskData = { type: 'proactive', prompt: cron.task }; }
 
+    // ─── ALIVE ENGINE (check-ins + memory callbacks) ───
+    if (taskData.type && taskData.type.startsWith('alive:') && alive) {
+      try {
+        await alive.handleTrigger(cron, taskData);
+      } catch (err) {
+        console.error(`[ALIVE] Trigger error:`, err.message);
+      }
+      return;
+    }
+
     if (taskData.type === 'proactive' && cron.contact) {
       console.log(`[CRON] Proactive outreach: "${cron.label}" -> ${cron.contact}`);
       try {
@@ -2312,8 +2361,9 @@ async function handleMessage(msg) {
         `Topics: ${topicCount} | Crons: ${cronCount} | Compactions: ${summaryCount} | Threads: ${threads.length}\n` +
         `Laptop: ${on ? 'Connected' : 'Offline'}\n` +
         `Screen Awareness: ${config.screenAwareness?.enabled ? 'ON' : 'OFF'}\n` +
-        `Features: vision, voice, topics, crons, compaction\n` +
-        `Engine: Favor (Baileys, no OpenClaw)`
+        `Features: vision, voice, topics, crons, compaction, alive\n` +
+        `Alive: ${alive ? 'ON' : 'OFF'}\n` +
+        `Engine: Favor (Baileys)`
       });
       return;
     }
@@ -2464,7 +2514,7 @@ async function handleMessage(msg) {
         `/update — Update to latest version\n` +
         `/clear — Clear conversation\n` +
         `/help — This message\n\n` +
-        `*Features:* vision, voice notes, topics, scheduled tasks, proactive outreach, smart compaction, memory sync`
+        `*Features:* vision, voice notes, topics, scheduled tasks, proactive outreach, smart compaction, memory sync, alive (check-ins + memory callbacks)`
       });
       return;
     }
@@ -3069,7 +3119,7 @@ notifyServer.listen(NOTIFY_PORT, '127.0.0.1', () => {
 // ─── START ───
 console.log(`[FAVOR] Starting ${config.identity.name}...`);
 console.log(`[FAVOR] "${config.identity.tagline}"`);
-console.log(`[FAVOR] Features: vision | voice | topics | crons | compaction | proactive`);
+console.log(`[FAVOR] Features: vision | voice | topics | crons | compaction | proactive | alive`);
 console.log(`[FAVOR] Using Baileys (same as OpenClaw) — credentials: ${AUTH_DIR}`);
 startWhatsApp().catch(err => {
   console.error('[FATAL] Failed to start WhatsApp:', err.message);

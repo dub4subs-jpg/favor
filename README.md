@@ -62,6 +62,26 @@ Only OpenAI is required. Everything else is optional but recommended.
 - **Knowledge base** — Load custom markdown files to give your bot expertise
 - **Conversation compaction** — Summarizes old messages so it never runs out of context
 
+### Alive Engine
+Your bot feels alive — not just a tool that waits for commands.
+
+- **Morning check-in** — Greets you each morning with relevant context from memory (pending tasks, deadlines, recent decisions)
+- **Evening wind-down** — Casual end-of-day recap or just vibes if nothing happened
+- **Memory callbacks** — Periodically resurfaces forgotten tasks, old decisions worth revisiting, or facts that connect to what you're doing now
+
+The AI can skip a check-in if there's nothing worth saying. Memory callbacks have a 7-day cooldown per memory so it won't nag. Costs ~$0.01-0.03/day.
+
+Configure in `config.json`:
+```json
+"alive": {
+  "enabled": true,
+  "morningCheckin": "09:00",
+  "eveningCheckin": "21:00",
+  "memoryCallbackHours": 8,
+  "timezoneOffsetHours": -5
+}
+```
+
 ### Tools
 - **Browser automation** — Browse websites, fill forms, take screenshots, shop online
 - **Video analysis** — Send YouTube/TikTok links for summaries, transcripts, and learning

@@ -73,6 +73,13 @@
     "intervalMs": 180000,
     "lastContext": ""
   },
+  "alive": {
+    "enabled": true,
+    "morningCheckin": "09:00",
+    "eveningCheckin": "21:00",
+    "memoryCallbackHours": 8,
+    "timezoneOffsetHours": -5
+  },
   "guard": {
     "maxDailySpend": 5.00,
     "maxHourlyRequests": 100,
