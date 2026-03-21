@@ -14,7 +14,7 @@ const VideoProcessor = require('./video');
 const BuildMode = require('./build-mode');
 const Guardian = require('./guardian');
 const SelfCheck = require('./selfcheck');
-const AliveEngine = require('./alive');
+const AliveEngine = require('./alive/');
 const syncBot = require('./sync');
 const pino = require('pino');
 
