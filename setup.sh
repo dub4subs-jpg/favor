@@ -59,7 +59,7 @@ done
 echo "[✓] Knowledge files ready"
 
 # ═══════════════════════════════════════════
-#  INTERACTIVE CONFIG — no manual editing!
+#  INTERACTIVE CONFIG
 # ═══════════════════════════════════════════
 
 echo ""
@@ -69,9 +69,59 @@ echo "  │     Answer a few questions and you're done.     │"
 echo "  └─────────────────────────────────────────────────┘"
 echo ""
 
+# ─── Personal or Business? ───
+echo "  What are you using this bot for?"
+echo ""
+echo "    1) Personal — just for me (only I can message it)"
+echo "    2) Business — customers can message it too"
+echo ""
+read -p "  Enter 1 or 2 (default: 1): " USE_MODE
+USE_MODE="${USE_MODE:-1}"
+
+if [ "$USE_MODE" = "2" ]; then
+    DM_POLICY="open"
+    ALLOW_GROUPS=true
+    PERSONALITY="business assistant"
+    echo ""
+    echo "  [✓] Business mode — anyone can message your bot"
+else
+    DM_POLICY="allowlist"
+    ALLOW_GROUPS=false
+    PERSONALITY="companion"
+fi
+
 # ─── Bot name ───
-read -p "  What do you want to name your bot? (default: Favor): " BOT_NAME
+echo ""
+if [ "$USE_MODE" = "2" ]; then
+    read -p "  What's your business name? (this is your bot's name): " BOT_NAME
+else
+    read -p "  What do you want to name your bot? (default: Favor): " BOT_NAME
+fi
 BOT_NAME="${BOT_NAME:-Favor}"
+
+# ─── Business info (if business mode) ───
+BUSINESS_TAGLINE="Always in your favor."
+if [ "$USE_MODE" = "2" ]; then
+    echo ""
+    read -p "  One-line description of your business: " BUSINESS_TAGLINE
+    BUSINESS_TAGLINE="${BUSINESS_TAGLINE:-Always in your favor.}"
+
+    echo ""
+    echo "  What tone should your bot use with customers?"
+    echo ""
+    echo "    1) Professional — formal, polished"
+    echo "    2) Friendly — warm, casual but professional"
+    echo "    3) Fun — upbeat, uses personality"
+    echo ""
+    read -p "  Enter 1, 2, or 3 (default: 2): " TONE_CHOICE
+    case "$TONE_CHOICE" in
+        1) BOT_TONE="professional, polished, formal" ;;
+        3) BOT_TONE="fun, upbeat, personable" ;;
+        *) BOT_TONE="friendly, helpful, professional" ;;
+    esac
+else
+    BOT_TONE="friendly, helpful, direct"
+fi
 
 # ─── Phone number ───
 echo ""
@@ -118,9 +168,9 @@ cat > config.json << CONFIGEOF
 {
   "identity": {
     "name": "${BOT_NAME}",
-    "tagline": "Always in your favor.",
-    "personality": "companion",
-    "tone": "friendly, helpful, direct"
+    "tagline": "${BUSINESS_TAGLINE}",
+    "personality": "${PERSONALITY}",
+    "tone": "${BOT_TONE}"
   },
   "model": {
     "provider": "openai",
@@ -142,14 +192,14 @@ cat > config.json << CONFIGEOF
   },
   "whatsapp": {
     "enabled": true,
-    "dmPolicy": "allowlist",
+    "dmPolicy": "${DM_POLICY}",
     "operatorNumber": "${PHONE_NUMBER}",
     "securityPhrase": "${SEC_PHRASE}",
     "allowFrom": [
       "${PHONE_NUMBER}"
     ],
     "trustedContacts": [],
-    "allowGroups": false,
+    "allowGroups": ${ALLOW_GROUPS},
     "selfChatMode": true,
     "mediaMaxMb": 50,
     "debounceMs": 0,
@@ -201,6 +251,43 @@ CONFIGEOF
 echo ""
 echo "[✓] config.json created for ${BOT_NAME}"
 
+# ─── Create business knowledge file if business mode ───
+if [ "$USE_MODE" = "2" ]; then
+    echo ""
+    echo "  Let's give your bot some business knowledge."
+    echo "  (You can always add more later by editing knowledge files)"
+    echo ""
+    read -p "  What does your business do? (1-2 sentences): " BIZ_DESC
+    read -p "  Business hours (e.g. Mon-Fri 9am-5pm): " BIZ_HOURS
+    read -p "  Location or website: " BIZ_LOCATION
+    read -p "  Key services/products (comma separated): " BIZ_SERVICES
+    echo ""
+    read -p "  Anything else customers should know? (press Enter to skip): " BIZ_EXTRA
+
+    cat > knowledge/business.md << BIZEOF
+# ${BOT_NAME}
+
+${BUSINESS_TAGLINE}
+
+## About
+${BIZ_DESC:-A business using Favor AI.}
+
+## Hours
+${BIZ_HOURS:-Contact us for hours.}
+
+## Location
+${BIZ_LOCATION:-Contact us for location details.}
+
+## Services / Products
+${BIZ_SERVICES:-Contact us for details.}
+
+${BIZ_EXTRA:+## Additional Info}
+${BIZ_EXTRA:-}
+BIZEOF
+
+    echo "[✓] Business knowledge file created"
+fi
+
 # ─── Set Gemini env var if provided ───
 if [ -n "$GEMINI_KEY" ]; then
     if ! grep -q "GEMINI_API_KEY" ~/.bashrc 2>/dev/null; then
@@ -210,13 +297,28 @@ if [ -n "$GEMINI_KEY" ]; then
     fi
 fi
 
-# ─── Claude Code check ───
+# ─── Claude Code ───
 echo ""
 if command -v claude &> /dev/null; then
-    echo "[✓] Claude Code found"
+    echo "[✓] Claude Code already installed"
 else
-    echo "[i] Claude Code not installed (optional — adds coding/engineering ability)"
-    echo "    Install later: curl -fsSL https://claude.ai/install.sh | sh"
+    echo "  Claude Code gives your bot engineering/coding abilities."
+    echo "  Requires a Claude account ($20/mo Pro or $100/mo Max)."
+    echo ""
+    read -p "  Install Claude Code? (y/N): " INSTALL_CLAUDE
+    if [ "$INSTALL_CLAUDE" = "y" ] || [ "$INSTALL_CLAUDE" = "Y" ]; then
+        echo ""
+        echo "  [*] Installing Claude Code..."
+        curl -fsSL https://claude.ai/install.sh | sh 2>&1
+        echo ""
+        echo "  [*] Now log in to your Claude account:"
+        echo ""
+        claude login
+        echo ""
+        echo "  [✓] Claude Code installed and logged in"
+    else
+        echo "  [i] Skipped — bot works fine without it (coding tasks use GPT-4o instead)"
+    fi
 fi
 
 # ═══════════════════════════════════════════
@@ -264,10 +366,26 @@ echo "  ║                                                   ║"
 echo "  ║  Send a message on WhatsApp and your bot          ║"
 echo "  ║  will reply. It runs 24/7 automatically.          ║"
 echo "  ║                                                   ║"
-echo "  ║  Useful commands:                                 ║"
-echo "  ║    pm2 logs ${BOT_PM2_NAME}          — see live logs      "
-echo "  ║    pm2 restart ${BOT_PM2_NAME}       — restart bot        "
-echo "  ║    pm2 stop ${BOT_PM2_NAME}          — stop bot           "
-echo "  ║    nano config.json          — edit settings      ║"
+echo "  ║  Helper scripts:                                  ║"
+echo "  ║    ./status.sh     — check bot health             ║"
+echo "  ║    ./update.sh     — pull latest updates          ║"
+echo "  ║    ./relink.sh     — re-scan WhatsApp QR code     ║"
+echo "  ║                                                   ║"
+echo "  ║  Or text your bot:                                ║"
+echo "  ║    /status  /update  /help                        ║"
 echo "  ╚═══════════════════════════════════════════════════╝"
 echo ""
+
+if [ "$USE_MODE" = "2" ]; then
+    echo "  ┌─────────────────────────────────────────────────┐"
+    echo "  │  BUSINESS TIP: Add more knowledge by creating   │"
+    echo "  │  .md files in the knowledge/ folder:            │"
+    echo "  │                                                 │"
+    echo "  │    nano knowledge/pricing.md                    │"
+    echo "  │    nano knowledge/faq.md                        │"
+    echo "  │    nano knowledge/policies.md                   │"
+    echo "  │                                                 │"
+    echo "  │  Your bot reads these automatically.            │"
+    echo "  └─────────────────────────────────────────────────┘"
+    echo ""
+fi
