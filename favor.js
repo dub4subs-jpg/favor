@@ -336,30 +336,26 @@ async function detectAndTrackThreads(contact, userMessage, assistantReply) {
     const combined = `User: ${userMessage}\nAssistant: ${assistantReply}`;
     if (combined.length < 30) return;
 
-    const model = new (require('@google/generative-ai').GoogleGenerativeAI)(process.env.GEMINI_API_KEY)
-      .getGenerativeModel({
-        model: 'gemini-2.5-flash',
-        systemInstruction: `You detect unresolved conversation threads — things the user mentioned, asked about, or started discussing that didn't get fully resolved in this exchange.
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 128,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You detect unresolved conversation threads — things the user mentioned, asked about, or started discussing that didn't get fully resolved in this exchange.
 
-Return a JSON array of strings, each a short (under 15 words) description of an open thread. Examples:
-- "Was going to set up weekly invoice automation"
-- "Asked about pricing but didn't finalize"
-- "Asked about pricing but didn't finalize"
+Return JSON: {"threads": ["short description", ...]}
+Each thread should be under 15 words. Return {"threads": []} if everything was resolved or it's just casual chat. MAX 2 items.`
+        },
+        { role: 'user', content: `Detect open threads:\n\n${combined.substring(0, 2000)}` }
+      ]
+    });
 
-Return [] if everything was resolved or it's just casual chat. MAX 2 items.`,
-        generationConfig: { maxOutputTokens: 128, responseMimeType: 'application/json' },
-      });
-
-    const result = await model.generateContent(`Detect open threads:\n\n${combined.substring(0, 2000)}`);
-    let text = result.response.text().trim();
-    // Strip markdown fences
-    text = text.replace(/^```json?\s*/s, '').replace(/\s*```$/s, '');
-    const bracketIdx = text.indexOf('[');
-    if (bracketIdx >= 0) text = text.slice(bracketIdx);
-    const lastBracket = text.lastIndexOf(']');
-    if (lastBracket >= 0) text = text.slice(0, lastBracket + 1);
+    const raw = response.choices?.[0]?.message?.content?.trim() || '{"threads":[]}';
     let threads;
-    try { threads = JSON.parse(text); } catch { threads = []; }
+    try { threads = JSON.parse(raw).threads || []; } catch { threads = []; }
 
     if (Array.isArray(threads)) {
       for (const thread of threads.slice(0, 2)) {

@@ -49,7 +49,7 @@
     }
   },
   "compaction": {
-    "model": "gemini-2.5-flash",
+    "model": "gpt-4o-mini",
     "threshold": 30,
     "keepRecent": 12,
     "summaryTokens": 512

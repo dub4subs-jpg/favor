@@ -171,18 +171,23 @@ function keywordOverride(message) {
 }
 
 // ─── CLASSIFIER ───
-// Accepts openai param for backwards compat but uses Gemini internally
-async function classify(_openai, message, recentContext = '') {
+// Uses gpt-4o-mini for fast, cheap classification
+async function classify(openai, message, recentContext = '') {
   // Check keyword overrides first — no API call needed
   const override = keywordOverride(message);
   if (override) return override;
 
   const start = Date.now();
   try {
-    const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = gemini.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: `You are a request router for an AI assistant. Classify the user message into ONE route.
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 120,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You are a request router for an AI assistant. Classify the user message into ONE route.
 
 ${ROUTE_DESCRIPTIONS}
 
@@ -191,39 +196,35 @@ Escalation scoring (0-10):
 4-6: Medium, mini or full
 7-10: High stakes, must use full
 
-Respond ONLY with valid JSON, no markdown:
-{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}`,
-      generationConfig: { maxOutputTokens: 120, temperature: 0 },
+Respond ONLY with valid JSON:
+{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}`
+        },
+        {
+          role: 'user',
+          content: `Context (last 300 chars): ${recentContext.slice(-300)}\n\nMessage: ${message}`
+        }
+      ]
     });
 
-    const result = await model.generateContent(
-      `Context (last 300 chars): ${recentContext.slice(-300)}\n\nMessage: ${message}`
-    );
-    const raw = result.response.text().trim();
-    // Strip markdown fences if present, then extract first JSON object
-    let json = raw.replace(/^```json?\s*/s, '').replace(/\s*```$/s, '');
-    // Match balanced braces (handles values containing special chars)
-    const jsonMatch = json.match(/\{[\s\S]*\}/);
-    if (jsonMatch) json = jsonMatch[0];
+    const raw = response.choices?.[0]?.message?.content?.trim() || '';
     let decision;
     try {
-      decision = JSON.parse(json);
+      decision = JSON.parse(raw);
     } catch {
-      // Gemini sometimes returns truncated JSON — try to extract fields manually
-      const route = json.match(/"route"\s*:\s*"(\w+)"/)?.[1];
-      const score = json.match(/"escalation_score"\s*:\s*(\d+)/)?.[1];
-      const reason = json.match(/"reason"\s*:\s*"([^"]*)"/)?.[1];
+      const route = raw.match(/"route"\s*:\s*"(\w+)"/)?.[1];
+      const score = raw.match(/"escalation_score"\s*:\s*(\d+)/)?.[1];
+      const reason = raw.match(/"reason"\s*:\s*"([^"]*)"/)?.[1];
       if (route) {
         decision = { route, escalation_score: parseInt(score || '0'), needs_review: false, reason: reason || 'partial parse recovery' };
       } else {
-        throw new Error(`Unparseable classifier response: ${json.slice(0, 120)}`);
+        throw new Error(`Unparseable classifier response: ${raw.slice(0, 120)}`);
       }
     }
     decision.classifier_ms = Date.now() - start;
     return decision;
   } catch (e) {
     console.warn('[ROUTER] Classification failed, defaulting to chat:', e.message);
-    return { route: 'chat', escalation_score: 0, needs_review: false, reason: 'classification error — free fallback', classifier_ms: Date.now() - start };
+    return { route: 'chat', escalation_score: 0, needs_review: false, reason: 'classification error — fallback', classifier_ms: Date.now() - start };
   }
 }
 
