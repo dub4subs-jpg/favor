@@ -78,13 +78,24 @@ After setup, you can personalize:
 
 ---
 
-## Useful commands
+## Helper scripts
+
+Run these from your server terminal:
 
 ```bash
-pm2 logs your-bot-name       # See live logs
-pm2 restart your-bot-name    # Restart the bot
-pm2 stop your-bot-name       # Stop the bot
-nano config.json             # Edit settings
+./status.sh     # Check if bot is running, uptime, memory, server health
+./update.sh     # Pull latest updates and restart the bot
+./relink.sh     # Re-scan QR code if WhatsApp disconnects
+```
+
+Or text these commands to your bot on WhatsApp:
+
+```
+/status         Show bot status
+/update         Update to latest version (bot restarts automatically)
+/memory         See what your bot remembers
+/model gpt-4o   Switch AI model
+/help           See all commands
 ```
 
 ---

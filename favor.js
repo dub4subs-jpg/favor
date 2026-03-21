@@ -2111,6 +2111,20 @@ async function handleMessage(msg) {
       return;
     }
 
+    if (cmd === '/update') {
+      await sock.sendMessage(jid, { text: 'Updating to latest version...' });
+      try {
+        const { execSync } = require('child_process');
+        const pull = execSync('cd ' + __dirname + ' && git pull origin master 2>&1', { timeout: 30000 }).toString().trim();
+        execSync('cd ' + __dirname + ' && npm install --silent 2>&1', { timeout: 60000 });
+        await sock.sendMessage(jid, { text: `*Update complete.*\n\n${pull}\n\nRestarting...` });
+        setTimeout(() => process.exit(0), 2000); // pm2 will restart
+      } catch (err) {
+        await sock.sendMessage(jid, { text: `Update failed: ${err.message}` });
+      }
+      return;
+    }
+
     if (cmd === '/help') {
       await sock.sendMessage(jid, { text:
         `*${config.identity.name} — Commands*\n\n` +
@@ -2124,6 +2138,7 @@ async function handleMessage(msg) {
         `/sync — Memory sync status\n` +
         `/recover — Recover shared state\n` +
         `/reload — Reload config\n` +
+        `/update — Update to latest version\n` +
         `/clear — Clear conversation\n` +
         `/help — This message\n\n` +
         `*Features:* vision, voice notes, topics, scheduled tasks, proactive outreach, smart compaction, memory sync`
