@@ -87,9 +87,25 @@ console.log('[VIDEO] Video processor initialized');
 const buildMode = new BuildMode(db);
 console.log('[BUILD] Build mode initialized');
 
-// ─── GUARDIAN (QA / Watchdog) ───
-const guardian = new Guardian();
-console.log('[GUARDIAN] QA watchdog initialized');
+// ─── GUARDIAN (QA / Watchdog + Runtime Guard) ───
+let guardian;
+try {
+  guardian = new Guardian(db, config, {
+    dataDir: path.join(__dirname, 'data'),
+    onAlert: (alert) => {
+      // Will be wired to sock.sendMessage after WhatsApp connects
+      if (global._guardianSock && global._guardianOperatorJid) {
+        global._guardianSock.sendMessage(global._guardianOperatorJid, {
+          text: `🛡️ *Guardian Alert* [${alert.level}]\n${alert.message}`
+        }).catch(() => {});
+      }
+    },
+  });
+  console.log('[GUARDIAN] QA watchdog + runtime guard initialized');
+} catch (e) {
+  console.error('[GUARDIAN] Init failed:', e.message);
+  guardian = new Guardian(null, config);
+}
 
 // ─── SELF-CHECK (health + sanitization) ───
 const selfCheck = new SelfCheck(db, config, {
@@ -527,6 +543,10 @@ const TOOLS = [
     required: ['target']
   }),
   oaiTool('guardian_report', 'Get the last Guardian scan report. Use after guardian_scan to retrieve formatted results, or when operator asks about the last scan.', {
+    type: 'object',
+    properties: {},
+  }),
+  oaiTool('guardian_status', 'Show Guardian runtime protection status — current API spend, request counts, rate limits, and recent security alerts.', {
     type: 'object',
     properties: {},
   }),
@@ -1264,6 +1284,9 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
       if (!last) return 'No previous Guardian scan found. Run guardian_scan first.';
       return `Last scan: ${last.scannedAt}\n\n${guardian.formatReport(last.report)}`;
     }
+    case 'guardian_status': {
+      return guardian.formatGuardStatus();
+    }
     // ─── SELF-CHECK ───
     case 'selfcheck': {
       await sock.sendMessage(context.contact, { text: '🛡️ *Self-Check* — Running health checks and cleanup...' });
@@ -1775,6 +1798,9 @@ async function startWhatsApp() {
       if (!global._startupMessageSent) {
         global._startupMessageSent = true;
         const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
+        // Wire guardian alerts to WhatsApp
+        global._guardianSock = sock;
+        global._guardianOperatorJid = operatorJid;
         try {
           await sock.sendMessage(operatorJid, { text: 'Favor is online.' });
           console.log('[FAVOR] Sent startup message to operator');
@@ -2154,6 +2180,14 @@ async function handleMessage(msg) {
   if (!jid || jid === 'status@broadcast') return;
   if (isGroup(jid) && !config.whatsapp.allowGroups) return;
   if (!isAllowed(jid)) return;
+
+  // ─── GUARDIAN RATE LIMIT CHECK ───
+  const guardCheck = guardian.checkRequest(jid, config.model.id, 'incoming');
+  if (!guardCheck.allowed) {
+    console.warn(`[GUARDIAN] Blocked request from ${jid}: ${guardCheck.reason}`);
+    await sock.sendMessage(jid, { text: `⚠️ ${guardCheck.reason}. Try again later.` });
+    return;
+  }
 
   const ts = new Date().toLocaleTimeString();
   const msgType = getMessageType(msg);
@@ -2850,12 +2884,21 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
     // Image was already sent by laptop_screenshot tool — skip text reply
     if (reply === '__IMAGE_SENT__') return;
 
+    // ─── GUARDIAN: Redact any leaked API keys before sending ───
+    reply = guardian.redactKeys(reply);
+    if (guardian.scanForKeyLeak(reply)) {
+      db.audit('security.key_leak', 'API key detected in outgoing message — redacted');
+    }
+
     if (reply.length > 4000) {
       const chunks = splitMessage(reply, 4000);
       for (const c of chunks) await sock.sendMessage(jid, { text: c });
     } else {
       await sock.sendMessage(jid, { text: reply });
     }
+
+    // ─── GUARDIAN: Track API usage ───
+    guardian.trackUsage(jid, modelUsed || config.model.id, 0, reply.length, decision?.route || 'full');
 
     console.log(`[${new Date().toLocaleTimeString()}] ${config.identity.name} replied (${reply.length} chars${topicId ? `, topic #${topicId}` : ''})`);
 
