@@ -2115,9 +2115,29 @@ async function handleMessage(msg) {
       await sock.sendMessage(jid, { text: 'Updating to latest version...' });
       try {
         const { execSync } = require('child_process');
-        const pull = execSync('cd ' + __dirname + ' && git pull origin master 2>&1', { timeout: 30000 }).toString().trim();
-        execSync('cd ' + __dirname + ' && npm install --silent 2>&1', { timeout: 60000 });
-        await sock.sendMessage(jid, { text: `*Update complete.*\n\n${pull}\n\nRestarting...` });
+        const dir = __dirname;
+        // Stash local changes if any
+        const localChanges = execSync(`cd ${dir} && git status --porcelain 2>/dev/null | grep -v '??' || true`, { timeout: 10000 }).toString().trim();
+        let stashed = false;
+        if (localChanges) {
+          execSync(`cd ${dir} && git stash push -m "favor-update-$(date +%Y%m%d-%H%M%S)"`, { timeout: 10000 });
+          stashed = true;
+        }
+        // Pull updates
+        const pull = execSync(`cd ${dir} && git pull origin master 2>&1`, { timeout: 30000 }).toString().trim();
+        // Restore local changes
+        let customStatus = '';
+        if (stashed) {
+          try {
+            execSync(`cd ${dir} && git stash pop`, { timeout: 10000 });
+            customStatus = '\n\nYour custom code was preserved.';
+          } catch (e) {
+            customStatus = '\n\n⚠ Merge conflict with your custom code. Run ./update.sh on the server to fix.';
+            execSync(`cd ${dir} && git checkout . 2>/dev/null; git stash pop 2>/dev/null || true`, { timeout: 10000 });
+          }
+        }
+        execSync(`cd ${dir} && npm install --silent 2>&1`, { timeout: 60000 });
+        await sock.sendMessage(jid, { text: `*Update complete.*\n\n${pull}${customStatus}\n\nRestarting...` });
         setTimeout(() => process.exit(0), 2000); // pm2 will restart
       } catch (err) {
         await sock.sendMessage(jid, { text: `Update failed: ${err.message}` });
