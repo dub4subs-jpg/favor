@@ -106,6 +106,14 @@ const GEMINI_KEYWORDS = [
   'competitor analysis', 'analyze this data', 'long document',
 ];
 
+const GUARDIAN_KEYWORDS = [
+  'run guardian', 'guardian scan', 'scan the project', 'scan this project',
+  'health check', 'health scan', 'audit the code', 'audit this',
+  'check for bugs', 'check for issues', 'run a scan', 'security scan',
+  'regression check', 'quality check', 'qa scan', 'qa check',
+  'is the project healthy', 'any regressions', 'run tests on',
+];
+
 const BUILD_KEYWORDS = [
   'build this', 'build me', 'build mode', 'build a ', 'build an ',
   'create an app', 'create a website', 'create a tool', 'create a script',
@@ -144,6 +152,9 @@ function keywordOverride(message) {
   }
   if (BUILD_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'tool', escalation_score: 6, needs_review: false, reason: 'keyword override: build mode activation', classifier_ms: 0 };
+  }
+  if (GUARDIAN_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: guardian scan', classifier_ms: 0 };
   }
   return null;
 }

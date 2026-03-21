@@ -12,6 +12,7 @@ const Vault = require('./vault');
 const Browser = require('./browser');
 const VideoProcessor = require('./video');
 const BuildMode = require('./build-mode');
+const Guardian = require('./guardian');
 const syncBot = require('./sync');
 const pino = require('pino');
 
@@ -84,6 +85,10 @@ console.log('[VIDEO] Video processor initialized');
 // ─── BUILD MODE (Claude Code for software building) ───
 const buildMode = new BuildMode(db);
 console.log('[BUILD] Build mode initialized');
+
+// ─── GUARDIAN (QA / Watchdog) ───
+const guardian = new Guardian();
+console.log('[GUARDIAN] QA watchdog initialized');
 // Backfill embeddings for any memories saved before semantic search was added
 setTimeout(() => backfillEmbeddings().catch(e => console.warn('[MEMORY] Backfill error:', e.message)), 5000);
 
@@ -502,6 +507,20 @@ const TOOLS = [
       work_dir: { type: 'string', description: 'Working directory' },
     },
     required: ['prompt', 'work_dir']
+  }),
+  // ─── GUARDIAN TOOLS ───
+  oaiTool('guardian_scan', 'Run a Guardian health scan on a project. Discovers features, validates code quality, checks security, detects regressions. Use when operator asks to "scan", "check health", "run guardian", "audit", or "test" a project.', {
+    type: 'object',
+    properties: {
+      target: { type: 'string', description: 'Project directory to scan (e.g. /root/he-qc-hub)' },
+      mode: { type: 'string', enum: ['smoke', 'quick', 'feature', 'deep', 'regression', 'deploy'], description: 'Scan depth (default: quick)' },
+      scope: { type: 'string', enum: ['full', 'frontend', 'backend', 'api', 'database', 'security'], description: 'What to scan (default: full)' },
+    },
+    required: ['target']
+  }),
+  oaiTool('guardian_report', 'Get the last Guardian scan report. Use after guardian_scan to retrieve formatted results, or when operator asks about the last scan.', {
+    type: 'object',
+    properties: {},
   }),
 ];
 
@@ -1211,6 +1230,26 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
       } catch (e) {
         return `Build command failed: ${e.message}`;
       }
+    }
+    // ─── GUARDIAN ───
+    case 'guardian_scan': {
+      const mode = input.mode || 'quick';
+      await sock.sendMessage(context.contact, { text: `🛡️ *Guardian* — Running ${mode} scan on \`${input.target}\`...\nThis may take a few minutes.` });
+      try {
+        const { report, logs } = await guardian.scan(input.target, {
+          mode,
+          scope: input.scope || 'full',
+        });
+        const formatted = guardian.formatReport(report);
+        return formatted;
+      } catch (e) {
+        return `Guardian scan failed: ${e.message}`;
+      }
+    }
+    case 'guardian_report': {
+      const last = guardian.getLastReport();
+      if (!last) return 'No previous Guardian scan found. Run guardian_scan first.';
+      return `Last scan: ${last.scannedAt}\n\n${guardian.formatReport(last.report)}`;
     }
     default: return 'Unknown tool: ' + name;
   }
