@@ -220,33 +220,6 @@ else
     PERSONALITY="companion"
 fi
 
-# ─── Use case ───
-echo ""
-if [ "$USE_MODE" = "2" ]; then
-    echo "  What does your business do? Pick what fits best:"
-    echo ""
-    echo "    1) Customer service   — answer questions, handle requests"
-    echo "    2) Appointments       — bookings, scheduling, reminders"
-    echo "    3) Sales / e-commerce — products, orders, recommendations"
-    echo "    4) Content / media    — social media, content creation"
-    echo "    5) Consulting / pro services — clients, projects, follow-ups"
-    echo "    6) General            — a bit of everything"
-    echo ""
-    read -p "  Enter 1-6 (default: 6): " BIZ_TYPE
-    BIZ_TYPE="${BIZ_TYPE:-6}"
-else
-    echo "  What will you mainly use your bot for?"
-    echo ""
-    echo "    1) Personal assistant — reminders, tasks, organization"
-    echo "    2) Research / learning — web search, video analysis, notes"
-    echo "    3) Coding / dev work  — engineering, debugging, automation"
-    echo "    4) Creative           — writing, brainstorming, design help"
-    echo "    5) General            — a bit of everything"
-    echo ""
-    read -p "  Enter 1-5 (default: 5): " PERSONAL_TYPE
-    PERSONAL_TYPE="${PERSONAL_TYPE:-5}"
-fi
-
 # ─── Bot name ───
 echo ""
 if [ "$USE_MODE" = "2" ]; then
@@ -256,29 +229,24 @@ else
 fi
 BOT_NAME="${BOT_NAME:-Favor}"
 
-# ─── Business details ───
-BUSINESS_TAGLINE="Always in your favor."
+# ─── Describe your use case ───
+echo ""
 if [ "$USE_MODE" = "2" ]; then
+    echo "  Describe your business in a few sentences."
+    echo "  (What you do, who your customers are, what the bot should help with)"
     echo ""
-    read -p "  One-line description of your business: " BUSINESS_TAGLINE
-    BUSINESS_TAGLINE="${BUSINESS_TAGLINE:-Always in your favor.}"
-
-    echo ""
-    echo "  What tone should your bot use with customers?"
-    echo ""
-    echo "    1) Professional — formal, polished"
-    echo "    2) Friendly — warm, casual but professional"
-    echo "    3) Fun — upbeat, uses personality"
-    echo ""
-    read -p "  Enter 1, 2, or 3 (default: 2): " TONE_CHOICE
-    case "$TONE_CHOICE" in
-        1) BOT_TONE="professional, polished, formal" ;;
-        3) BOT_TONE="fun, upbeat, personable" ;;
-        *) BOT_TONE="friendly, helpful, professional" ;;
-    esac
+    read -p "  > " USE_DESCRIPTION
 else
-    BOT_TONE="friendly, helpful, direct"
+    echo "  Describe what you want your bot to help you with."
+    echo "  (The more detail the better — it'll customize everything for you)"
+    echo ""
+    read -p "  > " USE_DESCRIPTION
 fi
+USE_DESCRIPTION="${USE_DESCRIPTION:-A general purpose AI assistant}"
+
+# Defaults (will be overridden by AI if OpenAI key is available)
+BUSINESS_TAGLINE="Always in your favor."
+BOT_TONE="friendly, helpful, direct"
 
 # ─── Staff numbers (business mode) ───
 STAFF_JSON="[]"
@@ -438,41 +406,159 @@ CONFIGEOF
 echo ""
 echo "[✓] config.json created for ${BOT_NAME}"
 
-# ─── Create business knowledge file if business mode ───
-if [ "$USE_MODE" = "2" ]; then
-    echo ""
-    echo "  Let's give your bot some business knowledge."
-    echo "  (You can always add more later by editing knowledge files)"
-    echo ""
-    read -p "  What does your business do? (1-2 sentences): " BIZ_DESC
-    read -p "  Business hours (e.g. Mon-Fri 9am-5pm): " BIZ_HOURS
-    read -p "  Location or website: " BIZ_LOCATION
-    read -p "  Key services/products (comma separated): " BIZ_SERVICES
-    echo ""
-    read -p "  Anything else customers should know? (press Enter to skip): " BIZ_EXTRA
+# ═══════════════════════════════════════════
+#  AI-POWERED CUSTOMIZATION
+#  Uses their OpenAI key to generate:
+#  - Tagline, tone, personality
+#  - Knowledge files tailored to their use case
+#  - Feature recommendations
+# ═══════════════════════════════════════════
 
-    cat > knowledge/business.md << BIZEOF
+if [ "$OPENAI_KEY" != "YOUR_OPENAI_API_KEY" ] && [ -n "$USE_DESCRIPTION" ]; then
+    echo ""
+    echo "  [*] Analyzing your description and customizing your bot..."
+    echo ""
+
+    if [ "$USE_MODE" = "2" ]; then
+        AI_MODE="business"
+    else
+        AI_MODE="personal"
+    fi
+
+    # Call OpenAI to generate customizations
+    AI_RESPONSE=$(curl -s --max-time 30 https://api.openai.com/v1/chat/completions \
+        -H "Authorization: Bearer ${OPENAI_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$(cat << AIPROMPTEOF
+{
+  "model": "gpt-4o-mini",
+  "temperature": 0.7,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are setting up a WhatsApp AI bot. The user described their use case. Generate a JSON response with these fields:\n\n1. tagline: A short catchy tagline for their bot (under 50 chars)\n2. tone: Comma-separated tone descriptors (e.g. 'friendly, professional, warm')\n3. personality: One word (companion, assistant, advisor, concierge, coach, expert)\n4. knowledge_files: Array of objects with 'filename' and 'content' — markdown knowledge files the bot should have. Create 2-4 files with real useful content based on their description. For business: include business info, services, FAQ. For personal: include relevant guides, preferences, goals.\n5. features: Array of strings — the most relevant bot features for their use case. Pick from: memory, scheduled_tasks, web_search, video_analysis, browser_automation, vault, voice_messages, image_analysis, email, laptop_remote, claude_code\n6. tips: Array of 3 short tips (one sentence each) for getting the most out of their bot\n\nRespond with ONLY valid JSON, no markdown."
+    },
+    {
+      "role": "user",
+      "content": "Mode: ${AI_MODE}\nBot name: ${BOT_NAME}\nDescription: ${USE_DESCRIPTION}"
+    }
+  ]
+}
+AIPROMPTEOF
+)" 2>/dev/null)
+
+    # Parse the AI response
+    AI_JSON=$(echo "$AI_RESPONSE" | node -e "
+        try {
+            const r = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            const content = r.choices[0].message.content.replace(/\`\`\`json?\n?/g,'').replace(/\`\`\`/g,'').trim();
+            console.log(content);
+        } catch(e) { console.log(''); }
+    " 2>/dev/null)
+
+    if [ -n "$AI_JSON" ] && echo "$AI_JSON" | node -e "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.exit(0)}catch(e){process.exit(1)}" 2>/dev/null; then
+        # Successfully got AI suggestions — apply them
+
+        # Update config with AI-generated tagline, tone, personality
+        NEW_TAGLINE=$(echo "$AI_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.tagline||'')" 2>/dev/null)
+        NEW_TONE=$(echo "$AI_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.tone||'')" 2>/dev/null)
+        NEW_PERSONALITY=$(echo "$AI_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.personality||'')" 2>/dev/null)
+
+        if [ -n "$NEW_TAGLINE" ]; then
+            node -e "
+                const fs = require('fs');
+                const c = JSON.parse(fs.readFileSync('config.json','utf8'));
+                c.identity.tagline = '${NEW_TAGLINE}'.replace(/'/g, \"\\\\'\");
+                c.identity.tone = '${NEW_TONE}'.replace(/'/g, \"\\\\'\") || c.identity.tone;
+                c.identity.personality = '${NEW_PERSONALITY}'.replace(/'/g, \"\\\\'\") || c.identity.personality;
+                fs.writeFileSync('config.json', JSON.stringify(c, null, 2));
+            " 2>/dev/null
+            echo "  [✓] Tagline: ${NEW_TAGLINE}"
+            echo "  [✓] Tone: ${NEW_TONE}"
+        fi
+
+        # Create knowledge files
+        echo "$AI_JSON" | node -e "
+            const fs = require('fs');
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            if (d.knowledge_files && d.knowledge_files.length) {
+                d.knowledge_files.forEach(f => {
+                    const path = 'knowledge/' + f.filename;
+                    fs.writeFileSync(path, f.content);
+                    console.log('  [✓] Created: ' + path);
+                });
+            }
+        " 2>/dev/null
+
+        # Show feature recommendations
+        echo ""
+        echo "  ┌─────────────────────────────────────────────────┐"
+        echo "  │         Recommended features for you            │"
+        echo "  └─────────────────────────────────────────────────┘"
+        echo ""
+
+        echo "$AI_JSON" | node -e "
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            const featureNames = {
+                memory: 'Memory — remembers everything across conversations',
+                scheduled_tasks: 'Scheduled tasks — reminders, follow-ups, recurring actions',
+                web_search: 'Web search — look up anything online',
+                video_analysis: 'Video analysis — summarize YouTube/TikTok content',
+                browser_automation: 'Browser — visit websites, fill forms, take screenshots',
+                vault: 'Vault — encrypted storage for sensitive info',
+                voice_messages: 'Voice — send/receive voice notes',
+                image_analysis: 'Vision — analyze photos and images',
+                email: 'Email — send emails and follow-ups',
+                laptop_remote: 'Laptop remote — control your computer via WhatsApp',
+                claude_code: 'Claude Code — engineering and coding tasks'
+            };
+            if (d.features) {
+                d.features.forEach(f => {
+                    const name = featureNames[f] || f;
+                    console.log('    [✓] ' + name);
+                });
+            }
+        " 2>/dev/null
+
+        # Show tips
+        echo ""
+        echo "$AI_JSON" | node -e "
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            if (d.tips && d.tips.length) {
+                console.log('  Tips:');
+                d.tips.forEach((t, i) => console.log('    ' + (i+1) + '. ' + t));
+            }
+        " 2>/dev/null
+
+    else
+        echo "  [i] Couldn't reach OpenAI for customization — using defaults."
+        echo "  [i] You can customize later by editing knowledge/ files."
+
+        # Fallback: create basic knowledge file for business mode
+        if [ "$USE_MODE" = "2" ]; then
+            cat > knowledge/business.md << BIZEOF
 # ${BOT_NAME}
 
-${BUSINESS_TAGLINE}
+## About
+${USE_DESCRIPTION}
+
+## Contact
+Contact us for more information.
+BIZEOF
+            echo "  [✓] Created basic knowledge/business.md"
+        fi
+    fi
+else
+    # No OpenAI key or no description — create basic files
+    if [ "$USE_MODE" = "2" ] && [ -n "$USE_DESCRIPTION" ]; then
+        cat > knowledge/business.md << BIZEOF
+# ${BOT_NAME}
 
 ## About
-${BIZ_DESC:-A business using Favor AI.}
-
-## Hours
-${BIZ_HOURS:-Contact us for hours.}
-
-## Location
-${BIZ_LOCATION:-Contact us for location details.}
-
-## Services / Products
-${BIZ_SERVICES:-Contact us for details.}
-
-${BIZ_EXTRA:+## Additional Info}
-${BIZ_EXTRA:-}
+${USE_DESCRIPTION}
 BIZEOF
-
-    echo "[✓] Business knowledge file created"
+        echo "  [✓] Created knowledge/business.md"
+    fi
 fi
 
 # ─── Set Gemini env var if provided ───
@@ -509,174 +595,7 @@ else
     fi
 fi
 
-# ═══════════════════════════════════════════
-#  FEATURE SUGGESTIONS based on use case
-# ═══════════════════════════════════════════
-
 echo ""
-echo "  ┌─────────────────────────────────────────────────┐"
-echo "  │         Recommended features for you            │"
-echo "  └─────────────────────────────────────────────────┘"
-echo ""
-
-if [ "$USE_MODE" = "2" ]; then
-    # Business suggestions
-    case "$BIZ_TYPE" in
-        1) # Customer service
-            echo "  Based on your use case (customer service), here's what's ready:"
-            echo ""
-            echo "    [✓] Knowledge base — drop FAQ, policies, product info into knowledge/"
-            echo "    [✓] Memory — bot remembers returning customers"
-            echo "    [✓] Web search — bot can look things up for customers"
-            echo "    [✓] Role security — customers can't access admin tools"
-            echo ""
-            echo "  Suggested knowledge files to create:"
-            echo "    nano knowledge/faq.md          — common questions & answers"
-            echo "    nano knowledge/policies.md     — return policy, shipping, etc."
-            echo "    nano knowledge/troubleshoot.md  — common issues & solutions"
-            ;;
-        2) # Appointments
-            echo "  Based on your use case (appointments), here's what's ready:"
-            echo ""
-            echo "    [✓] Scheduled tasks — set up recurring reminders"
-            echo "    [✓] Memory — remembers client preferences"
-            echo "    [✓] Messaging — bot can send confirmations & reminders"
-            echo "    [✓] Staff access — staff can manage schedules via WhatsApp"
-            echo ""
-            echo "  Suggested knowledge files to create:"
-            echo "    nano knowledge/services.md     — services, durations, prices"
-            echo "    nano knowledge/booking.md      — how to book, cancellation policy"
-            echo "  Suggested next step:"
-            echo "    Tell your bot to create scheduled reminders for appointments"
-            ;;
-        3) # Sales / e-commerce
-            echo "  Based on your use case (sales/e-commerce), here's what's ready:"
-            echo ""
-            echo "    [✓] Knowledge base — product catalog, pricing, inventory"
-            echo "    [✓] Browser automation — check sites, fill forms"
-            echo "    [✓] Memory — tracks customer preferences & order history"
-            echo "    [✓] Web search — research products, competitors"
-            echo ""
-            echo "  Suggested knowledge files to create:"
-            echo "    nano knowledge/products.md     — product list with descriptions"
-            echo "    nano knowledge/pricing.md      — pricing, discounts, bundles"
-            echo "    nano knowledge/shipping.md     — shipping rates & delivery times"
-            ;;
-        4) # Content / media
-            echo "  Based on your use case (content/media), here's what's ready:"
-            echo ""
-            echo "    [✓] Video analysis — analyze YouTube/TikTok content"
-            echo "    [✓] Web research — research trends, competitors"
-            echo "    [✓] Browser automation — check social platforms"
-            echo "    [✓] Memory — track content ideas & performance notes"
-            echo ""
-            echo "  Suggested knowledge files to create:"
-            echo "    nano knowledge/brand.md        — brand voice, style guide"
-            echo "    nano knowledge/content.md      — content calendar, themes"
-            ;;
-        5) # Consulting
-            echo "  Based on your use case (consulting), here's what's ready:"
-            echo ""
-            echo "    [✓] Memory — track client projects & notes"
-            echo "    [✓] Scheduling — reminders, follow-ups, check-ins"
-            echo "    [✓] Vault — securely store client info"
-            echo "    [✓] Email — send follow-ups and reports"
-            echo ""
-            echo "  Suggested knowledge files to create:"
-            echo "    nano knowledge/services.md     — what you offer"
-            echo "    nano knowledge/process.md      — your workflow & methodology"
-            echo "    nano knowledge/clients.md      — client-facing info & FAQs"
-            ;;
-        *) # General
-            echo "  Here's what's ready for your business:"
-            echo ""
-            echo "    [✓] Knowledge base — teach your bot about your business"
-            echo "    [✓] Memory — remembers customers & conversations"
-            echo "    [✓] Scheduling — reminders and follow-ups"
-            echo "    [✓] Web search — look things up for customers"
-            echo "    [✓] Staff roles — team access without admin risk"
-            echo ""
-            echo "  Start by creating knowledge files:"
-            echo "    nano knowledge/business.md     — already created with your info"
-            echo "    nano knowledge/faq.md          — common questions"
-            echo "    nano knowledge/pricing.md      — your services/pricing"
-            ;;
-    esac
-else
-    # Personal suggestions
-    case "$PERSONAL_TYPE" in
-        1) # Personal assistant
-            echo "  Based on your use case (personal assistant), here's what's ready:"
-            echo ""
-            echo "    [✓] Scheduled reminders — 'remind me to X every Monday at 9am'"
-            echo "    [✓] Memory — remembers everything you tell it"
-            echo "    [✓] Vault — securely store passwords, cards, addresses"
-            echo "    [✓] Web search — look things up instantly"
-            if [ "$HAS_CLAUDE" = true ]; then
-                echo "    [✓] Claude Code — can run tasks on your server"
-            fi
-            echo ""
-            echo "  Try telling your bot: 'Remind me to check email every morning at 9am'"
-            ;;
-        2) # Research / learning
-            echo "  Based on your use case (research/learning), here's what's ready:"
-            echo ""
-            echo "    [✓] Web search — research any topic instantly"
-            echo "    [✓] Video analysis — send YouTube links for summaries"
-            echo "    [✓] Learn from URL — bot reads articles and remembers key points"
-            echo "    [✓] Memory — builds knowledge over time"
-            echo "    [✓] Browser — visit and read full web pages"
-            echo ""
-            echo "  Try: Send your bot a YouTube link and say 'learn this'"
-            ;;
-        3) # Coding / dev
-            echo "  Based on your use case (coding/dev), here's what's ready:"
-            echo ""
-            if [ "$HAS_CLAUDE" = true ]; then
-                echo "    [✓] Claude Code — full engineering capability"
-            else
-                echo "    [!] Claude Code not installed — HIGHLY recommended for dev work"
-                echo "        Install: curl -fsSL https://claude.ai/install.sh | sh"
-            fi
-            echo "    [✓] Server commands — run code, manage processes"
-            echo "    [✓] File read/write — edit files on your server"
-            echo "    [✓] Browser — test web apps, scrape docs"
-            echo "    [✓] Memory — remembers project context"
-            echo ""
-            echo "  Optional: Connect your laptop for remote dev"
-            echo "    Edit config.json → laptop.enabled = true + SSH details"
-            ;;
-        4) # Creative
-            echo "  Based on your use case (creative), here's what's ready:"
-            echo ""
-            echo "    [✓] Memory — remembers your style, preferences, ideas"
-            echo "    [✓] Web research — inspiration, references, trends"
-            echo "    [✓] Video analysis — break down creative content"
-            echo "    [✓] Learn from URL — study techniques from articles"
-            echo "    [✓] Browser — browse reference sites, mood boards"
-            echo ""
-            echo "  Customize your bot's personality:"
-            echo "    nano knowledge/identity.md     — make it match your creative style"
-            ;;
-        *) # General
-            echo "  Here's what's ready for you:"
-            echo ""
-            echo "    [✓] Memory — remembers everything across conversations"
-            echo "    [✓] Scheduled tasks — reminders, check-ins, recurring tasks"
-            echo "    [✓] Web search — look up anything"
-            echo "    [✓] Video analysis — send links for summaries"
-            echo "    [✓] Vault — encrypted storage for sensitive info"
-            echo "    [✓] Browser — visit websites, fill forms"
-            if [ "$HAS_CLAUDE" = true ]; then
-                echo "    [✓] Claude Code — engineering and coding tasks"
-            fi
-            echo ""
-            echo "  Customize your bot:"
-            echo "    nano knowledge/identity.md     — personality & style"
-            echo "    nano knowledge/goals.md        — what you're working toward"
-            ;;
-    esac
-fi
 
 # ═══════════════════════════════════════════
 #  LAUNCH
