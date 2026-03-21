@@ -40,9 +40,7 @@ for (const file of files) {
   if (file.path.startsWith('memory/') && content.length > 50) {
     if (basename.match(/^2026-03-1[0-1]/) ||
         basename.includes('cost') ||
-        basename.includes('compliance') ||
         basename.includes('invoice') ||
-        basename.includes('product') ||
         basename.includes('node_monitor')) {
       const destPath = path.join(KNOWLEDGE_DIR, `oc_${basename}.md`);
       fs.writeFileSync(destPath, content);
@@ -58,7 +56,7 @@ for (const file of files) {
     if (trimmed.length < 10 || trimmed.length > 500) continue;
     if (trimmed.startsWith('```') || trimmed.match(/^\d{4}-\d{2}-\d{2}T/) || trimmed.startsWith('|')) continue;
 
-    if (trimmed.match(/owner|contact|phone|email|address|business|client|invoice|product|batch|compliance/i)) {
+    if (trimmed.match(/owner|contact|phone|email|address|business|client|invoice/i)) {
       favor.save('fact', trimmed);
       savedFacts++;
     }

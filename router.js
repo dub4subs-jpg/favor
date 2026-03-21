@@ -54,7 +54,6 @@ const TOOL_KEYWORDS = [
   'on my desktop', 'on my screen', 'logged in on', 'i\'m on the page',
   'on the page', 'go to the website', 'fill out the form', 'fill the form',
   'click on', 'navigate to', 'open the website', 'browse to',
-  'barcode', 'barcodes', 'gs1', 'gtin', 'upc',
   // Messaging & email — need send_message / send_email tools
   'message her', 'message him', 'text her', 'text him',
   'send her a', 'send him a', 'send a message', 'send message',
@@ -83,13 +82,6 @@ const VIDEO_KEYWORDS = [
   'watch this', 'learn from this', 'analyze this video', 'what\'s in this video',
   'youtube.com', 'youtu.be', 'tiktok.com', 'twitter.com/i/status',
   'x.com/i/status', 'vimeo.com', 'instagram.com/reel',
-];
-
-const FLYER_KEYWORDS = [
-  'make a flyer', 'create a flyer', 'generate a flyer', 'design a flyer',
-  'flyer for', 'product flyer', 'promo flyer', 'distributor sheet',
-  'save to drive', 'save this to drive', 'save image to drive',
-  'save to products', 'save to brand assets',
 ];
 
 const UIUX_KEYWORDS = [
@@ -131,9 +123,6 @@ function keywordOverride(message) {
   }
   if (VIDEO_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: video analysis', classifier_ms: 0 };
-  }
-  if (FLYER_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: flyer/drive operation', classifier_ms: 0 };
   }
   if (UIUX_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: UI/UX design system', classifier_ms: 0 };

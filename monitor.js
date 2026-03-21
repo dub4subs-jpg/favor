@@ -15,17 +15,17 @@ const PATTERNS = [
   {
     name: 'selector_loop',
     desc: 'Bot trying multiple selectors for the same element',
-    regex: /\[TOOL\] browser_(click|evaluate|get_clickables).*?(Select|Assign|Yes|In Use|View Barcode)/,
+    regex: /\[TOOL\] browser_(click|evaluate|get_clickables).*?(Select|Assign|Yes|In Use|Submit)/,
     threshold: 3, // 3+ attempts = stuck
     window: 60000, // within 60 seconds
     hits: [],
-    advice: 'Selector failed repeatedly. Check barcode_skill.md for correct selectors. Use browser_get_clickables first to see what\'s available.'
+    advice: 'Selector failed repeatedly. Use browser_get_clickables first to see what\'s available.'
   },
   {
     name: 'wrong_tool',
     desc: 'Bot using laptop tools when browser tools needed',
     regex: /\[TOOL\] laptop_screenshot.*|laptop_status/,
-    context_regex: /browser_|barcode|gs1|gtin|product/,
+    context_regex: /browser_/,
     threshold: 1,
     window: 30000,
     hits: [],

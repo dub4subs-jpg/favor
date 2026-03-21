@@ -276,8 +276,8 @@ async function detectAndTrackThreads(contact, userMessage, assistantReply) {
         systemInstruction: `You detect unresolved conversation threads — things the user mentioned, asked about, or started discussing that didn't get fully resolved in this exchange.
 
 Return a JSON array of strings, each a short (under 15 words) description of an open thread. Examples:
-- "Wanted to ask about HE QC pipeline stages"
 - "Was going to set up weekly invoice automation"
+- "Asked about pricing but didn't finalize"
 - "Asked about pricing but didn't finalize"
 
 Return [] if everything was resolved or it's just casual chat. MAX 2 items.`,
@@ -419,49 +419,13 @@ const TOOLS = [
   // ─── LEARNING TOOLS ───
   oaiTool('learn_from_url', 'Read a webpage/article/course page and extract techniques, principles, and knowledge. Saves learnings to operator profile. Use when operator says "learn this", "study this", or shares an article/course URL to learn from.', { type: 'object', properties: { url: { type: 'string', description: 'URL to learn from' }, context: { type: 'string', description: 'What to focus on or how to apply it' } }, required: ['url'] }),
   // ─── KNOWLEDGE SEARCH ───
-  oaiTool('knowledge_search', 'Search the knowledge base files for relevant information. Uses fast keyword search (BM25) across all indexed markdown docs. Use when you need to look up skills, procedures, product info, compliance rules, or any documented knowledge.', {
+  oaiTool('knowledge_search', 'Search the knowledge base files for relevant information. Uses fast keyword search (BM25) across all indexed markdown docs. Use when you need to look up skills, procedures, or any documented knowledge.', {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'Search query (keywords work best, e.g. "barcode creation", "florida compliance", "laptop tools")' },
+      query: { type: 'string', description: 'Search query (keywords work best, e.g. "laptop tools", "scheduling", "browser automation")' },
       num_results: { type: 'number', description: 'Number of results to return (default: 5)' }
     },
     required: ['query']
-  }),
-  // ─── FLYER TOOLS ───
-  oaiTool('generate_flyer', 'Generate a marketing flyer for a Higher Education product. Returns a PNG image. Do NOT use any AI API for this — it renders locally via Puppeteer. Archives to Google Drive and Cloudinary automatically.', {
-    type: 'object',
-    properties: {
-      product_name: { type: 'string', description: 'Product name (e.g. "THCP Sugar Wax Dabs")' },
-      category: { type: 'string', description: 'Product category (e.g. "Concentrates", "Edibles", "Flower")' },
-      subtitle: { type: 'string', description: 'Subtitle or tagline' },
-      flyer_type: { type: 'string', enum: ['single', 'family', 'promo', 'distributor'], description: 'Type of flyer (default: single)' },
-      cta: { type: 'string', description: 'Call to action text (default: "Now In Stock")' },
-      variants: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string' } } }, description: 'Product variants for family flyers' },
-      promo_headline: { type: 'string', description: 'Promo headline (for promo flyers)' },
-      promo_discount: { type: 'string', description: 'Discount text (e.g. "20% OFF")' },
-      visual_style: { type: 'string', enum: ['dark_luxury', 'luxury_minimal', 'bright_launch', 'dispensary_promo', 'neon_drop', 'premium_concentrate', 'flavor_burst', 'product_spotlight', 'limited_drop'], description: 'Visual style (default: dark_luxury). Use neon_drop for hype drops, premium_concentrate for wax/dabs, flavor_burst for gummies/edibles, limited_drop for exclusive releases' },
-      output_sizes: { type: 'array', items: { type: 'string' }, description: 'Output sizes (default: ["1080x1350"]). Options: 1080x1350, 1080x1920, 1920x1080, 2550x3300' }
-    },
-    required: ['product_name']
-  }),
-  oaiTool('save_to_drive', 'Save the last received image to a specific folder in Google Drive (Higher Education folder). Use when operator sends a product photo and wants it saved.', {
-    type: 'object',
-    properties: {
-      folder_path: { type: 'string', description: 'Folder path relative to HE root, e.g. "Products/Northern Lights" or "Brand Assets/Logos"' },
-      file_name: { type: 'string', description: 'File name to save as (e.g. "northern-lights-box.png")' }
-    },
-    required: ['folder_path', 'file_name']
-  }),
-  // ─── BARCODE TOOLS ───
-  oaiTool('create_barcode', 'Create a UPC-A barcode for a product via GS1 US Data Hub. Handles the ENTIRE flow automatically: login, create product, assign GTIN, set to In Use, download barcode PNG. ALWAYS confirm product details with operator BEFORE calling this tool. Brand is always "Higher Education" unless specified otherwise.', {
-    type: 'object',
-    properties: {
-      product_description: { type: 'string', description: 'Product name/description (e.g. "Vitamin D3 5000IU 60ct")' },
-      packaging: { type: 'string', enum: ['each', 'case'], description: 'Packaging level: "each" for single units, "case" for multi-packs (default: each)' },
-      case_qty: { type: 'number', description: 'Number of items per case (only if packaging=case, e.g. 10 for a 10-pack)' },
-      brand_name: { type: 'string', description: 'Brand name (default: "Higher Education")' }
-    },
-    required: ['product_description']
   }),
   // ─── UI/UX DESIGN SYSTEM TOOLS ───
   oaiTool('design_system', 'Generate a complete UI/UX design system recommendation for any product, website, or app. Returns style, colors, typography, layout pattern, effects, and anti-patterns based on 161 industry-specific rules. Use when the operator asks to design something, needs a color palette, wants UI style advice, or is starting a new website/app project.', {
@@ -1115,105 +1079,6 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
         return 'Knowledge search error: ' + e.message;
       }
     }
-    case 'generate_flyer': {
-      try {
-        await sock.sendMessage(context.contact, {
-          text: `🎨 Generating flyer for "${input.product_name}"...\nThis takes about 10-15 seconds.`
-        });
-
-        const { generateFlyer } = require('./flyer-bridge');
-        const result = await generateFlyer({
-          product_name: input.product_name,
-          category: input.category,
-          subtitle: input.subtitle,
-          flyer_type: input.flyer_type || 'single',
-          cta: input.cta,
-          variants: input.variants,
-          promo_headline: input.promo_headline,
-          promo_discount: input.promo_discount,
-          visual_style: input.visual_style,
-          output_sizes: input.output_sizes,
-        });
-
-        if (!result.ok) return 'Flyer generation failed: ' + result.error;
-
-        // Send Cloudinary URL (fast, no large file transfer)
-        let msg = `✅ Flyer ready!\n\n📋 ${input.product_name}`;
-        if (result.score) msg += `\n⭐ Quality: ${result.score}/10`;
-        if (result.driveId) msg += `\n📁 Archived to Drive`;
-        if (result.cloudinaryUrl) msg += `\n\n🔗 View: ${result.cloudinaryUrl}`;
-        else if (result.outputPath) msg += `\n\n💾 Saved locally: ${result.outputPath}`;
-
-        return msg;
-      } catch (e) {
-        return 'Flyer generation error: ' + e.message;
-      }
-    }
-    case 'save_to_drive': {
-      try {
-        if (!lastReceivedImage) return 'No image received yet. Send me the image first, then tell me where to save it.';
-
-        await sock.sendMessage(context.contact, {
-          text: `📁 Saving to Drive: ${input.folder_path}/${input.file_name}...`
-        });
-
-        const { saveImageToDrive } = require('./flyer-bridge');
-        const result = await saveImageToDrive(lastReceivedImage.buffer, input.file_name, input.folder_path);
-
-        if (!result.ok) return 'Drive save failed: ' + result.error;
-
-        return `Saved to Google Drive!\nFolder: ${result.folder}\nFile: ${result.name}`;
-      } catch (e) {
-        return 'Drive save error: ' + e.message;
-      }
-    }
-    case 'create_barcode': {
-      try {
-        const desc = input.product_description;
-        const pkg = input.packaging || 'each';
-        const qty = input.case_qty || null;
-        const brand = input.brand_name || 'Higher Education';
-
-        await sock.sendMessage(context.contact, {
-          text: `🏭 Creating barcode for "${desc}"...\n📦 Packaging: ${pkg}${qty ? ' (' + qty + ' per case)' : ''}\n🏷️ Brand: ${brand}\n\nThis takes about 90 seconds. I'll send the barcode when it's ready.`
-        });
-
-        const { createBarcode } = require('./barcode-creator');
-        const result = await createBarcode(desc, {
-          activate: true,
-          packaging: pkg,
-          caseQty: qty,
-          brandName: brand
-        });
-
-        if (result.ok) {
-          // Send barcode image via WhatsApp
-          const barcodePath = result.barcodePath;
-          if (barcodePath && require('fs').existsSync(barcodePath)) {
-            await sock.sendMessage(context.contact, {
-              image: require('fs').readFileSync(barcodePath),
-              caption: `✅ Barcode created!\n\n📋 Product: ${desc}\n🔢 GTIN: ${result.gtin}\n📦 Packaging: ${pkg}\n🏷️ Brand: ${brand}\n💾 Saved to: ${barcodePath}`
-            });
-          }
-
-          // Also try to copy to laptop
-          try {
-            const { execSync } = require('child_process');
-            const safeName = desc.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
-            execSync(`scp "${barcodePath}" ${config.laptop.user}@${config.laptop.host}:"C:\\Users\\${config.laptop.user}\\Desktop\\barcodes\\${safeName}_barcode.png"`, { timeout: 15000 });
-            console.log(`[BARCODE] Copied to laptop: ${safeName}_barcode.png`);
-          } catch (scpErr) {
-            console.log('[BARCODE] Could not copy to laptop: ' + scpErr.message);
-          }
-
-          return `Barcode created successfully!\nGTIN: ${result.gtin}\nProduct: ${desc}\nStatus: IN USE\nSaved: ${barcodePath}\n\nSteps completed: ${result.steps.map(s => s.step + ':' + s.status).join(', ')}`;
-        } else {
-          return `Barcode creation failed at step: ${result.error}\nSteps: ${JSON.stringify(result.steps)}`;
-        }
-      } catch (e) {
-        return 'Barcode creation error: ' + e.message;
-      }
-    }
     case 'design_system': {
       try {
         const { generateDesignSystem, formatMarkdown, formatCompact } = require('./uiux');
@@ -1320,16 +1185,16 @@ Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
 - When told to "send her/him" something (links, info, files), ALWAYS use send_message to deliver it to that person directly. Don't just do background work (like adding collaborators) — the person needs to actually RECEIVE the information via WhatsApp.
 - NEVER leave someone hanging. If you tell anyone "one moment", "stand by", "let me check", or "I'll get back to you" — you MUST follow up with the actual answer in the SAME interaction. Do not end your turn without delivering the result. Get the info, then send_message them the answer immediately.
 - When talking to trusted contacts, BE AUTONOMOUS. Search your memory for answers (repo URLs, project info, etc.) instead of deferring to the operator. Solve their questions directly.
-- For web tasks (barcodes, forms, shopping, research): use your HEADLESS BROWSER (browser_navigate, browser_click, browser_type, etc.) — this works independently without needing the laptop.
+- For web tasks (forms, shopping, research): use your HEADLESS BROWSER (browser_navigate, browser_click, browser_type, etc.) — this works independently without needing the laptop.
 - For laptop-specific tasks (open apps, show screen, run desktop commands): use laptop tools (laptop_screenshot, laptop_open_url, laptop_open_app).
 - Only use laptop_screenshot if the operator says "I'm on the page" or "look at my screen" — otherwise default to HEADLESS BROWSER for web tasks.
 
-[PROGRESS REPORTING] When doing multi-step tasks (browser automation, file operations, etc.), include a short text update WITH your tool calls to keep the operator informed. Example: "Logging into GS1 now..." or "Form filled, clicking Save and Continue..." — these messages get sent in real time. Don't be silent during long tasks.
+[PROGRESS REPORTING] When doing multi-step tasks (browser automation, file operations, etc.), include a short text update WITH your tool calls to keep the operator informed. Example: "Filling out the form now..." or "Form filled, clicking Save and Continue..." — these messages get sent in real time. Don't be silent during long tasks.
 
 [TOOL MEMORY] When a tool sequence works successfully (e.g., browser login flow, form fill pattern, file operation), remember it and reuse the same approach next time. Don't re-discover what already works — use your memory tools to save successful patterns. Only change your approach if you find something faster or more efficient.
 
-[PLANNING] For multi-step tasks (barcode creation, form filling, browser automation, etc.), you MUST output a numbered PLAN as text content alongside your first tool call(s). This plan stays in the conversation and guides subsequent tool execution. Example:
-"Plan: 1) vault_get gs1_login creds 2) browser_navigate to dh.gs1us.org 3) type email in #signInName 4) click #continue 5) type password in #password 6) click #next 7) wait for dashboard 8) navigate to product page 9) click Add New Product 10) fill form 11) save and continue..."
+[PLANNING] For multi-step tasks (form filling, browser automation, etc.), you MUST output a numbered PLAN as text content alongside your first tool call(s). This plan stays in the conversation and guides subsequent tool execution. Example:
+"Plan: 1) vault_get login creds 2) browser_navigate to site 3) type email in #signInName 4) click #continue 5) type password in #password 6) click #next 7) wait for dashboard 8) navigate to target page 9) fill form 10) save and continue..."
 Then start executing step 1. Each subsequent tool call should reference which plan step it's on. This is CRITICAL — without a plan, multi-step tasks will fail.
 
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
