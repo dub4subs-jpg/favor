@@ -583,6 +583,59 @@ const TOOLS = [
     type: 'object',
     properties: {},
   }),
+  // ─── TEACH MODE ───
+  oaiTool('teach_create', 'Create a new custom command. The operator teaches you a reusable sequence of steps that can be triggered later by a short phrase. Use when operator says "teach:", "when I say X do Y", "create a command", "add a shortcut". Extract the trigger phrase and pipeline of tool steps.', {
+    type: 'object',
+    properties: {
+      command_name: { type: 'string', description: 'Human-readable name (e.g. "Morning Briefing", "Invoice Jerry")' },
+      trigger_phrase: { type: 'string', description: 'Short phrase to trigger this command (e.g. "morning", "invoice jerry")' },
+      description: { type: 'string', description: 'What this command does' },
+      pipeline: {
+        type: 'array',
+        description: 'Ordered list of tool steps to execute',
+        items: {
+          type: 'object',
+          properties: {
+            tool: { type: 'string', description: 'Tool name to call (e.g. "memory_search", "web_search", "server_exec")' },
+            params: { type: 'object', description: 'Parameters for the tool call' },
+            description: { type: 'string', description: 'What this step does' },
+          },
+          required: ['tool', 'params'],
+        },
+      },
+    },
+    required: ['command_name', 'trigger_phrase', 'pipeline'],
+  }),
+  oaiTool('teach_list', 'List all custom commands the operator has taught. Shows name, trigger, usage count, and status.', {
+    type: 'object',
+    properties: {},
+  }),
+  oaiTool('teach_run', 'Execute a taught command by ID. Runs each step in the pipeline sequentially.', {
+    type: 'object',
+    properties: {
+      id: { type: 'number', description: 'Taught command ID' },
+    },
+    required: ['id'],
+  }),
+  oaiTool('teach_update', 'Update an existing taught command — change its name, trigger, description, pipeline, or enable/disable it.', {
+    type: 'object',
+    properties: {
+      id: { type: 'number', description: 'Taught command ID' },
+      command_name: { type: 'string' },
+      trigger_phrase: { type: 'string' },
+      description: { type: 'string' },
+      pipeline: { type: 'array', items: { type: 'object' } },
+      enabled: { type: 'boolean' },
+    },
+    required: ['id'],
+  }),
+  oaiTool('teach_delete', 'Delete a taught command by ID.', {
+    type: 'object',
+    properties: {
+      id: { type: 'number', description: 'Taught command ID' },
+    },
+    required: ['id'],
+  }),
 ];
 
 // ─── PROMPT INJECTION DEFENSE ───
@@ -1325,6 +1378,75 @@ If the page has no useful content (404, paywall, login wall, etc.), respond with
         return `Self-check failed: ${e.message}`;
       }
     }
+
+    // ─── TEACH MODE ───
+    case 'teach_create': {
+      try {
+        const id = db.saveTeachCommand(
+          context.contact,
+          input.command_name,
+          input.description || '',
+          input.trigger_phrase,
+          input.pipeline || []
+        );
+        return `✅ Taught command created!\n*#${id} — ${input.command_name}*\nTrigger: "${input.trigger_phrase}"\nSteps: ${(input.pipeline || []).length}\n\nSay "${input.trigger_phrase}" anytime to run it.`;
+      } catch (e) {
+        return `Failed to create taught command: ${e.message}`;
+      }
+    }
+
+    case 'teach_list': {
+      const commands = db.listTeachCommands(context.contact);
+      if (!commands.length) return 'No taught commands yet. Teach me something! Say "teach: when I say X, do Y"';
+      return '*Your Commands:*\n\n' + commands.map(c =>
+        `*#${c.id} — ${c.command_name}* ${c.enabled ? '✅' : '⏸️'}\n` +
+        `  Trigger: "${c.trigger_phrase}"\n` +
+        (c.description ? `  ${c.description}\n` : '') +
+        `  Used ${c.execution_count}x` + (c.last_executed ? ` (last: ${c.last_executed})` : '')
+      ).join('\n\n');
+    }
+
+    case 'teach_run': {
+      const cmd = db.getTeachCommand(input.id);
+      if (!cmd) return `Taught command #${input.id} not found.`;
+      if (!cmd.enabled) return `Command "${cmd.command_name}" is disabled.`;
+      const pipeline = JSON.parse(cmd.pipeline);
+      if (!pipeline.length) return `Command "${cmd.command_name}" has no steps.`;
+
+      await sock.sendMessage(context.contact, { text: `⚡ Running: *${cmd.command_name}* (${pipeline.length} steps)` });
+      const results = [];
+      for (let i = 0; i < pipeline.length; i++) {
+        const step = pipeline[i];
+        try {
+          const result = await executeTool(step.tool, step.params || {}, context);
+          results.push(`✓ Step ${i + 1}: ${step.description || step.tool} — OK`);
+        } catch (e) {
+          results.push(`✗ Step ${i + 1}: ${step.description || step.tool} — ${e.message}`);
+          break;
+        }
+      }
+      db.recordTeachExecution(cmd.id);
+      return `*${cmd.command_name}* — Done\n\n${results.join('\n')}`;
+    }
+
+    case 'teach_update': {
+      const cmd = db.getTeachCommand(input.id);
+      if (!cmd) return `Taught command #${input.id} not found.`;
+      const updates = {};
+      if (input.command_name) updates.commandName = input.command_name;
+      if (input.trigger_phrase) updates.triggerPhrase = input.trigger_phrase;
+      if (input.description) updates.description = input.description;
+      if (input.pipeline) updates.pipeline = input.pipeline;
+      if (input.enabled !== undefined) updates.enabled = input.enabled;
+      db.updateTeachCommand(input.id, updates);
+      return `✅ Updated command #${input.id} — ${input.command_name || cmd.command_name}`;
+    }
+
+    case 'teach_delete': {
+      const removed = db.deleteTeachCommand(input.id);
+      return removed ? `🗑️ Deleted taught command #${input.id}` : `Command #${input.id} not found.`;
+    }
+
     default: return 'Unknown tool: ' + name;
   }
 }
@@ -1400,6 +1522,8 @@ Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
 [PLANNING] For multi-step tasks (form filling, browser automation, etc.), you MUST output a numbered PLAN as text content alongside your first tool call(s). This plan stays in the conversation and guides subsequent tool execution. Example:
 "Plan: 1) vault_get login creds 2) browser_navigate to site 3) type email in #signInName 4) click #continue 5) type password in #password 6) click #next 7) wait for dashboard 8) navigate to target page 9) fill form 10) save and continue..."
 Then start executing step 1. Each subsequent tool call should reference which plan step it's on. This is CRITICAL — without a plan, multi-step tasks will fail.
+
+[TEACH MODE] The operator can teach you custom commands. When they say "teach: when I say X, do Y" or "create a command called X", use teach_create to store a reusable pipeline of tool steps. The operator can then say their trigger phrase anytime and the pipeline runs automatically — no AI reasoning needed, just deterministic tool execution. Use teach_list to show saved commands, teach_run to execute by ID, teach_update to modify, teach_delete to remove. Encourage the operator to teach you shortcuts for things they do repeatedly.
 
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
 
@@ -2603,6 +2727,32 @@ async function handleMessage(msg) {
       console.warn('[MEMORY] Auto-recall failed (non-fatal):', e.message);
     }
 
+    // ─── TEACH MODE: check for trigger match before routing ───
+    const teachMatch = db.matchTeachCommand(jid, body);
+    if (teachMatch) {
+      const pipeline = JSON.parse(teachMatch.pipeline);
+      console.log(`[TEACH] Matched command #${teachMatch.id}: "${teachMatch.command_name}" (${pipeline.length} steps)`);
+      await sock.sendMessage(jid, { text: `⚡ *${teachMatch.command_name}*` });
+      const results = [];
+      for (let i = 0; i < pipeline.length; i++) {
+        const step = pipeline[i];
+        try {
+          const result = await executeTool(step.tool, step.params || {}, { contact: jid });
+          results.push({ step: step.description || step.tool, result, ok: true });
+        } catch (e) {
+          results.push({ step: step.description || step.tool, result: e.message, ok: false });
+          break;
+        }
+      }
+      db.recordTeachExecution(teachMatch.id);
+      const summary = results.map((r, i) => `${r.ok ? '✓' : '✗'} ${r.step}`).join('\n');
+      await sock.sendMessage(jid, { text: summary || 'Done.' });
+      history.push({ role: 'user', content: [{ type: 'text', text: body }] });
+      history.push({ role: 'assistant', content: `[Teach Mode] Executed "${teachMatch.command_name}":\n${summary}` });
+      db.saveSession(jid, history);
+      return;
+    }
+
     const systemMsg = { role: 'system', content: buildSystemPrompt(jid, messageTextForRecall, relevantMemories) };
     const routerStart = Date.now();
 
@@ -2863,8 +3013,12 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
         messages: [systemMsg, ...history]
       });
 
-      // Tool loop: switch to gpt-4o-mini for execution (cheaper, faster, higher rate limits)
-      const toolModel = 'gpt-4o-mini';
+      // Tool loop: use gpt-4o for browser tasks (multi-step navigation needs full reasoning),
+      // gpt-4o-mini for everything else (cheaper, faster, higher rate limits)
+      const BROWSER_TOOLS = new Set(['browser_navigate', 'browser_click', 'browser_type', 'browser_select',
+        'browser_fill_form', 'browser_get_fields', 'browser_get_clickables', 'browser_get_text',
+        'browser_scroll', 'browser_evaluate', 'browser_screenshot', 'browser_close', 'browser_status', 'browser_fill_from_vault']);
+      let useFullModel = false; // escalate to gpt-4o if browser tools detected
       let toolLoops = 0;
       while (response.choices?.[0]?.finish_reason === 'tool_calls' && toolLoops < 10) {
         toolLoops++;
@@ -2881,27 +3035,29 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
             history.push({ role: 'tool', tool_call_id: toolCall.id, content: `Error parsing tool arguments: ${parseErr.message}` });
             continue;
           }
+          // Detect browser tools — stay on gpt-4o for the entire loop
+          if (BROWSER_TOOLS.has(toolCall.function.name)) useFullModel = true;
           console.log(`[TOOL] ${toolCall.function.name}: ${JSON.stringify(input).substring(0, 100)}`);
           toolsUsed.push(toolCall.function.name);
           const result = await executeTool(toolCall.function.name, input, { contact: jid, role: getRole(jid) });
           history.push({ role: 'tool', tool_call_id: toolCall.id, content: String(result) });
         }
         await sock.sendPresenceUpdate('composing', jid);
+        const toolModel = useFullModel ? config.model.id : 'gpt-4o-mini';
         response = await openai.chat.completions.create({
           model: toolModel,
-          max_tokens: 2048,
+          max_tokens: useFullModel ? config.model.maxTokens : 2048,
           tools: getToolsForRole(role),
           messages: [systemMsg, ...history]
         });
-        if (toolLoops === 1) console.log(`[TOOL-LOOP] Switched to ${toolModel} for execution`);
+        if (toolLoops === 1) console.log(`[TOOL-LOOP] Using ${toolModel} for execution${useFullModel ? ' (browser task)' : ''}`);
       }
 
-      // If mini produced the final reply after tool execution, escalate back to GPT-4o for a polished response
+      // Tag which model handled tool execution
       reply = response.choices?.[0]?.message?.content || '';
       if (toolLoops > 0 && reply) {
-        // Mini finished the tools — its text reply is good enough, tag it
-        modelUsed = `${config.model.id}+mini`;
-        console.log(`[TOOL-LOOP] Done after ${toolLoops} loops (mini executed, 4o planned)`);
+        modelUsed = useFullModel ? config.model.id : `${config.model.id}+mini`;
+        console.log(`[TOOL-LOOP] Done after ${toolLoops} loops (${useFullModel ? '4o full' : 'mini executed, 4o planned'})`);
       } else {
         modelUsed = config.model.id;
       }
