@@ -6,7 +6,7 @@
 echo ""
 echo "  ╔═══════════════════════════════════════╗"
 echo "  ║         FAVOR — Setup Script          ║"
-echo "  ║      Your AI WhatsApp Companion       ║"
+echo "  ║       Your AI Companion Bot           ║"
 echo "  ╚═══════════════════════════════════════╝"
 echo ""
 
@@ -199,6 +199,25 @@ echo "  │     Answer a few questions and you're done.     │"
 echo "  └─────────────────────────────────────────────────┘"
 echo ""
 
+# ─── Platform choice ───
+echo "  Which messaging platform do you want to use?"
+echo ""
+echo "    1) Telegram  — easy setup, no extra phone needed (recommended)"
+echo "    2) WhatsApp  — requires a second phone number"
+echo ""
+read -p "  Enter 1 or 2 (default: 1): " PLATFORM_CHOICE
+PLATFORM_CHOICE="${PLATFORM_CHOICE:-1}"
+
+if [ "$PLATFORM_CHOICE" = "2" ]; then
+    PLATFORM="whatsapp"
+    echo ""
+    echo "  [✓] WhatsApp — you'll scan a QR code at the end"
+else
+    PLATFORM="telegram"
+    echo ""
+    echo "  [✓] Telegram — you'll need a bot token from @BotFather"
+fi
+
 # ─── Personal or Business? ───
 echo "  What are you using this bot for?"
 echo ""
@@ -270,13 +289,30 @@ if [ "$USE_MODE" = "2" ]; then
     fi
 fi
 
-# ─── Phone number ───
-echo ""
-echo "  Your WhatsApp number (with country code, e.g. +13055551234)"
-read -p "  Phone number: " PHONE_NUMBER
-if [ -z "$PHONE_NUMBER" ]; then
-    echo "  [!] Phone number is required. You can edit config.json later."
-    PHONE_NUMBER="+1XXXXXXXXXX"
+# ─── Platform-specific setup ───
+PHONE_NUMBER="+1XXXXXXXXXX"
+TELEGRAM_TOKEN=""
+
+if [ "$PLATFORM" = "telegram" ]; then
+    echo ""
+    echo "  To create a Telegram bot:"
+    echo "    1. Open Telegram and message @BotFather"
+    echo "    2. Send /newbot and follow the prompts"
+    echo "    3. Copy the bot token it gives you"
+    echo ""
+    read -p "  Paste your bot token: " TELEGRAM_TOKEN
+    if [ -z "$TELEGRAM_TOKEN" ]; then
+        echo "  [!] Bot token is required. You can add it later: nano config.json"
+        TELEGRAM_TOKEN="YOUR_BOT_TOKEN_FROM_BOTFATHER"
+    fi
+else
+    echo ""
+    echo "  Your WhatsApp number (with country code, e.g. +13055551234)"
+    read -p "  Phone number: " PHONE_NUMBER
+    if [ -z "$PHONE_NUMBER" ]; then
+        echo "  [!] Phone number is required. You can edit config.json later."
+        PHONE_NUMBER="+1XXXXXXXXXX"
+    fi
 fi
 
 # ─── OpenAI API key ───
@@ -372,6 +408,7 @@ VAULT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
 # ─── Write config.json ───
 cat > config.json << CONFIGEOF
 {
+  "platform": "${PLATFORM}",
   "identity": {
     "name": "${BOT_NAME}",
     "tagline": "${BUSINESS_TAGLINE}",
@@ -395,6 +432,16 @@ cat > config.json << CONFIGEOF
     "geminiApiKey": "${GEMINI_KEY}",
     "braveApiKey": "${BRAVE_KEY}",
     "kimiApiKey": ""
+  },
+  "telegram": {
+    "botToken": "${TELEGRAM_TOKEN}",
+    "operatorChatId": "",
+    "dmPolicy": "${DM_POLICY}",
+    "allowGroups": ${ALLOW_GROUPS},
+    "securityPhrase": "${SEC_PHRASE}",
+    "trustedContacts": [],
+    "staff": ${STAFF_JSON},
+    "allowFrom": []
   },
   "whatsapp": {
     "enabled": true,
@@ -495,7 +542,7 @@ if [ "$OPENAI_KEY" != "YOUR_OPENAI_API_KEY" ] && [ -n "$USE_DESCRIPTION" ]; then
   "messages": [
     {
       "role": "system",
-      "content": "You are setting up a WhatsApp AI bot. The user described their use case. Generate a JSON response with these fields:\n\n1. tagline: A short catchy tagline for their bot (under 50 chars)\n2. tone: Comma-separated tone descriptors (e.g. 'friendly, professional, warm')\n3. personality: One word (companion, assistant, advisor, concierge, coach, expert)\n4. knowledge_files: Array of objects with 'filename' and 'content' — markdown knowledge files the bot should have. Create 2-4 files with real useful content based on their description. For business: include business info, services, FAQ. For personal: include relevant guides, preferences, goals.\n5. features: Array of strings — the most relevant bot features for their use case. Pick from: memory, scheduled_tasks, web_search, video_analysis, browser_automation, vault, voice_messages, image_analysis, email, laptop_remote, claude_code, alive\n6. tips: Array of 3 short tips (one sentence each) for getting the most out of their bot\n\nRespond with ONLY valid JSON, no markdown."
+      "content": "You are setting up an AI companion bot (platform: ${PLATFORM}). The user described their use case. Generate a JSON response with these fields:\n\n1. tagline: A short catchy tagline for their bot (under 50 chars)\n2. tone: Comma-separated tone descriptors (e.g. 'friendly, professional, warm')\n3. personality: One word (companion, assistant, advisor, concierge, coach, expert)\n4. knowledge_files: Array of objects with 'filename' and 'content' — markdown knowledge files the bot should have. Create 2-4 files with real useful content based on their description. For business: include business info, services, FAQ. For personal: include relevant guides, preferences, goals.\n5. features: Array of strings — the most relevant bot features for their use case. Pick from: memory, scheduled_tasks, web_search, video_analysis, browser_automation, vault, voice_messages, image_analysis, email, laptop_remote, claude_code, alive\n6. tips: Array of 3 short tips (one sentence each) for getting the most out of their bot\n\nRespond with ONLY valid JSON, no markdown."
     },
     {
       "role": "user",
@@ -568,7 +615,7 @@ AIPROMPTEOF
                 voice_messages: 'Voice — send/receive voice notes',
                 image_analysis: 'Vision — analyze photos and images',
                 email: 'Email — send emails and follow-ups',
-                laptop_remote: 'Laptop remote — control your computer via WhatsApp',
+                laptop_remote: 'Laptop remote — control your computer from your bot',
                 claude_code: 'Claude Code — engineering and coding tasks',
                 alive: 'Alive Engine — proactive morning/evening check-ins + memory callbacks'
             };
@@ -661,61 +708,136 @@ echo ""
 #  LAUNCH
 # ═══════════════════════════════════════════
 
-echo ""
-echo "  ╔═══════════════════════════════════════════════════╗"
-echo "  ║                 Setup Complete!                   ║"
-echo "  ║                                                   ║"
-echo "  ║  Your bot '${BOT_NAME}' is ready to launch.            "
-echo "  ║                                                   ║"
-echo "  ║  Starting now — a QR code will appear below.      ║"
-echo "  ║                                                   ║"
-echo "  ║  Open WhatsApp > Settings > Linked Devices        ║"
-echo "  ║  > Link a Device > Scan the QR code               ║"
-echo "  ╚═══════════════════════════════════════════════════╝"
-echo ""
-
-read -p "  Press Enter to start ${BOT_NAME}..." _
-
-# First run — show QR code
-node favor.js &
-BOT_PID=$!
-
-echo ""
-echo "  Scan the QR code above with WhatsApp."
-echo "  After scanning, press Enter to finish setup."
-echo ""
-read -p "  Press Enter after you've scanned the QR code..." _
-
-# Kill the foreground process and set up pm2
-kill $BOT_PID 2>/dev/null
-sleep 2
-
 BOT_PM2_NAME=$(echo "$BOT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 
-# Check if this pm2 name already exists
-if pm2 describe "$BOT_PM2_NAME" > /dev/null 2>&1; then
-    pm2 restart "$BOT_PM2_NAME"
-    echo "  [✓] Restarted existing pm2 process: ${BOT_PM2_NAME}"
-else
-    pm2 start favor.js --name "${BOT_PM2_NAME}" --restart-delay 20000
-    echo "  [✓] Started new pm2 process: ${BOT_PM2_NAME}"
-fi
-pm2 save
-pm2 startup 2>/dev/null || true
+if [ "$PLATFORM" = "telegram" ]; then
+    echo ""
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║                 Setup Complete!                   ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Your bot '${BOT_NAME}' is ready to launch.            "
+    echo "  ║                                                   ║"
+    echo "  ║  Starting now — message your bot on Telegram!     ║"
+    echo "  ║                                                   ║"
+    echo "  ║  After your first message, check the console      ║"
+    echo "  ║  for your Chat ID — set it as operatorChatId      ║"
+    echo "  ║  in config.json for admin access.                 ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo ""
 
-echo ""
-echo "  ╔═══════════════════════════════════════════════════╗"
-echo "  ║              ${BOT_NAME} is LIVE!                       "
-echo "  ║                                                   ║"
-echo "  ║  Send a message on WhatsApp and your bot          ║"
-echo "  ║  will reply. It runs 24/7 automatically.          ║"
-echo "  ║                                                   ║"
-echo "  ║  Helper scripts:                                  ║"
-echo "  ║    ./status.sh     — check bot health             ║"
-echo "  ║    ./update.sh     — pull latest updates          ║"
-echo "  ║    ./relink.sh     — re-scan WhatsApp QR code     ║"
-echo "  ║                                                   ║"
-echo "  ║  Or text your bot:                                ║"
-echo "  ║    /status  /update  /help                        ║"
-echo "  ╚═══════════════════════════════════════════════════╝"
-echo ""
+    read -p "  Press Enter to start ${BOT_NAME}..." _
+
+    # Start and let it run briefly so user can see it working
+    node favor.js &
+    BOT_PID=$!
+    echo ""
+    echo "  Bot is starting... Message your bot on Telegram now!"
+    echo "  Once you see your Chat ID in the logs, note it down."
+    echo ""
+    read -p "  Press Enter after you've messaged your bot..." _
+
+    # Kill the foreground process and set up pm2
+    kill $BOT_PID 2>/dev/null
+    sleep 2
+
+    echo ""
+    echo "  Now set your Chat ID as the operator:"
+    read -p "  Your Telegram Chat ID (from the logs above): " TG_CHAT_ID
+    if [ -n "$TG_CHAT_ID" ]; then
+        node -e "
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('config.json','utf8'));
+            c.telegram.operatorChatId = '${TG_CHAT_ID}';
+            fs.writeFileSync('config.json', JSON.stringify(c, null, 2));
+        " 2>/dev/null
+        echo "  [✓] Operator Chat ID set to ${TG_CHAT_ID}"
+    else
+        echo "  [i] No Chat ID set — you can add it later in config.json"
+    fi
+
+    # Set up pm2
+    if pm2 describe "$BOT_PM2_NAME" > /dev/null 2>&1; then
+        pm2 restart "$BOT_PM2_NAME"
+        echo "  [✓] Restarted existing pm2 process: ${BOT_PM2_NAME}"
+    else
+        pm2 start favor.js --name "${BOT_PM2_NAME}" --restart-delay 20000
+        echo "  [✓] Started new pm2 process: ${BOT_PM2_NAME}"
+    fi
+    pm2 save
+    pm2 startup 2>/dev/null || true
+
+    echo ""
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║              ${BOT_NAME} is LIVE!                       "
+    echo "  ║                                                   ║"
+    echo "  ║  Message your bot on Telegram — it will reply!    ║"
+    echo "  ║  It runs 24/7 automatically.                      ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Helper scripts:                                  ║"
+    echo "  ║    ./status.sh     — check bot health             ║"
+    echo "  ║    ./update.sh     — pull latest updates          ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Or text your bot:                                ║"
+    echo "  ║    /status  /update  /help                        ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo ""
+
+else
+    # WhatsApp flow
+    echo ""
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║                 Setup Complete!                   ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Your bot '${BOT_NAME}' is ready to launch.            "
+    echo "  ║                                                   ║"
+    echo "  ║  Starting now — a QR code will appear below.      ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Open WhatsApp > Settings > Linked Devices        ║"
+    echo "  ║  > Link a Device > Scan the QR code               ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo ""
+
+    read -p "  Press Enter to start ${BOT_NAME}..." _
+
+    # First run — show QR code
+    node favor.js &
+    BOT_PID=$!
+
+    echo ""
+    echo "  Scan the QR code above with WhatsApp."
+    echo "  After scanning, press Enter to finish setup."
+    echo ""
+    read -p "  Press Enter after you've scanned the QR code..." _
+
+    # Kill the foreground process and set up pm2
+    kill $BOT_PID 2>/dev/null
+    sleep 2
+
+    # Check if this pm2 name already exists
+    if pm2 describe "$BOT_PM2_NAME" > /dev/null 2>&1; then
+        pm2 restart "$BOT_PM2_NAME"
+        echo "  [✓] Restarted existing pm2 process: ${BOT_PM2_NAME}"
+    else
+        pm2 start favor.js --name "${BOT_PM2_NAME}" --restart-delay 20000
+        echo "  [✓] Started new pm2 process: ${BOT_PM2_NAME}"
+    fi
+    pm2 save
+    pm2 startup 2>/dev/null || true
+
+    echo ""
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║              ${BOT_NAME} is LIVE!                       "
+    echo "  ║                                                   ║"
+    echo "  ║  Send a message on WhatsApp and your bot          ║"
+    echo "  ║  will reply. It runs 24/7 automatically.          ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Helper scripts:                                  ║"
+    echo "  ║    ./status.sh     — check bot health             ║"
+    echo "  ║    ./update.sh     — pull latest updates          ║"
+    echo "  ║    ./relink.sh     — re-scan WhatsApp QR code     ║"
+    echo "  ║                                                   ║"
+    echo "  ║  Or text your bot:                                ║"
+    echo "  ║    /status  /update  /help                        ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo ""
+fi

@@ -16,6 +16,7 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.13.6",
     "better-sqlite3": "^12.6.2",
+    "grammy": "^1.41.1",
     "openai": "^6.27.0",
     "pino": "^10.3.1",
     "puppeteer": "^24.39.0",

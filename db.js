@@ -71,11 +71,26 @@ class FavorMemory {
         created_at TEXT DEFAULT (datetime('now')),
         resolved_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS taught_commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact TEXT NOT NULL,
+        command_name TEXT NOT NULL,
+        description TEXT,
+        trigger_phrase TEXT NOT NULL,
+        pipeline TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        execution_count INTEGER DEFAULT 0,
+        last_executed TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
       CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
       CREATE INDEX IF NOT EXISTS idx_sessions_contact ON sessions(contact);
       CREATE INDEX IF NOT EXISTS idx_topics_contact ON topics(contact);
       CREATE INDEX IF NOT EXISTS idx_crons_enabled ON crons(enabled);
       CREATE INDEX IF NOT EXISTS idx_threads_contact ON open_threads(contact, status);
+      CREATE INDEX IF NOT EXISTS idx_taught_contact ON taught_commands(contact, enabled);
+      CREATE INDEX IF NOT EXISTS idx_taught_trigger ON taught_commands(trigger_phrase);
     `);
     // Add embedding column to existing DBs that predate this migration
     try { this.db.exec(`ALTER TABLE memories ADD COLUMN embedding TEXT`); } catch (_) {}
@@ -382,6 +397,70 @@ class FavorMemory {
       }
     }
     return resolved;
+  }
+
+  // ─── TEACH MODE ───
+  saveTeachCommand(contact, commandName, description, triggerPhrase, pipeline) {
+    const stmt = this.db.prepare(`
+      INSERT INTO taught_commands (contact, command_name, description, trigger_phrase, pipeline)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const result = stmt.run(contact, commandName, description || null, triggerPhrase.toLowerCase(), JSON.stringify(pipeline));
+    return result.lastInsertRowid;
+  }
+
+  getTeachCommands(contact) {
+    return this.db.prepare(
+      'SELECT * FROM taught_commands WHERE contact = ? AND enabled = 1 ORDER BY created_at DESC'
+    ).all(contact);
+  }
+
+  matchTeachCommand(contact, message) {
+    const commands = this.db.prepare(
+      'SELECT * FROM taught_commands WHERE contact = ? AND enabled = 1'
+    ).all(contact);
+    const lower = message.toLowerCase().trim();
+    for (const cmd of commands) {
+      if (lower === cmd.trigger_phrase) return cmd;
+    }
+    for (const cmd of commands) {
+      if (lower.startsWith(cmd.trigger_phrase + ' ') || lower.startsWith(cmd.trigger_phrase + ',')) return cmd;
+    }
+    return null;
+  }
+
+  getTeachCommand(id) {
+    return this.db.prepare('SELECT * FROM taught_commands WHERE id = ?').get(id) || null;
+  }
+
+  updateTeachCommand(id, updates) {
+    const fields = [];
+    const values = [];
+    if (updates.commandName !== undefined) { fields.push('command_name = ?'); values.push(updates.commandName); }
+    if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+    if (updates.triggerPhrase !== undefined) { fields.push('trigger_phrase = ?'); values.push(updates.triggerPhrase.toLowerCase()); }
+    if (updates.pipeline !== undefined) { fields.push('pipeline = ?'); values.push(JSON.stringify(updates.pipeline)); }
+    if (updates.enabled !== undefined) { fields.push('enabled = ?'); values.push(updates.enabled ? 1 : 0); }
+    if (!fields.length) return 0;
+    fields.push("updated_at = datetime('now')");
+    values.push(id);
+    return this.db.prepare(`UPDATE taught_commands SET ${fields.join(', ')} WHERE id = ?`).run(...values).changes;
+  }
+
+  deleteTeachCommand(id) {
+    return this.db.prepare('DELETE FROM taught_commands WHERE id = ?').run(id).changes;
+  }
+
+  recordTeachExecution(id) {
+    this.db.prepare(
+      "UPDATE taught_commands SET execution_count = execution_count + 1, last_executed = datetime('now') WHERE id = ?"
+    ).run(id);
+  }
+
+  listTeachCommands(contact) {
+    return this.db.prepare(
+      'SELECT id, command_name, description, trigger_phrase, enabled, execution_count, last_executed, created_at FROM taught_commands WHERE contact = ? ORDER BY execution_count DESC'
+    ).all(contact);
   }
 
   // ─── AUDIT ───

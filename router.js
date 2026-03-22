@@ -122,6 +122,14 @@ const GUARDIAN_KEYWORDS = [
   'api spend', 'rate limit', 'spend limit',
 ];
 
+const TEACH_KEYWORDS = [
+  'teach:', 'teach me', 'teach command', 'teach this',
+  'when i say', 'create a command', 'create command',
+  'add a shortcut', 'new shortcut', 'save this workflow',
+  'my commands', 'list commands', 'delete command', 'remove command',
+  'edit command', 'update command', 'disable command', 'enable command',
+];
+
 const BUILD_KEYWORDS = [
   'build this', 'build me', 'build mode', 'build a ', 'build an ',
   'create an app', 'create a website', 'create a tool', 'create a script',
@@ -157,6 +165,9 @@ function keywordOverride(message) {
   }
   if (GEMINI_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'gemini', escalation_score: 5, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
+  }
+  if (TEACH_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: teach mode', classifier_ms: 0 };
   }
   if (BUILD_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'tool', escalation_score: 6, needs_review: false, reason: 'keyword override: build mode activation', classifier_ms: 0 };

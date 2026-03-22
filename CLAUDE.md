@@ -1,21 +1,36 @@
 # CLAUDE.md — Favor Framework
 
 ## What is this?
-Favor is a WhatsApp AI companion framework built on Baileys (WhatsApp Web API) with multi-model routing, persistent memory (SQLite), conversation compaction, scheduled tasks, voice/vision support, browser automation, an encrypted vault, a built-in software builder (Claude Code), and Guardian — a security/QA framework with runtime protection.
+Favor is a multi-platform AI companion framework supporting **WhatsApp** (Baileys) and **Telegram** (grammy), with multi-model routing, persistent memory (SQLite), conversation compaction, scheduled tasks, voice/vision support, browser automation, an encrypted vault, a built-in software builder (Claude Code), and Guardian — a security/QA framework with runtime protection.
 
 ## Quick Start
+
+### Option A: WhatsApp (requires a second phone number)
 1. Copy `config.example.json` → `config.json` and fill in your API keys
-2. Copy `knowledge/*.example.md` → remove `.example` suffix and customize
-3. Run `npm install`
-4. Run `node favor.js` (will show QR code to link WhatsApp)
+2. Set `"platform": "whatsapp"` in config.json
+3. Copy `knowledge/*.example.md` → remove `.example` suffix and customize
+4. Run `npm install`
+5. Run `node favor.js` (will show QR code to link WhatsApp)
+
+### Option B: Telegram (no extra phone needed — recommended for most users)
+1. Copy `config.example.json` → `config.json` and fill in your API keys
+2. Set `"platform": "telegram"` in config.json
+3. Message @BotFather on Telegram → `/newbot` → copy the bot token
+4. Paste the token into `config.json` → `telegram.botToken`
+5. Copy `knowledge/*.example.md` → remove `.example` suffix and customize
+6. Run `npm install`
+7. Run `node favor.js`
+8. Message your bot on Telegram — it will reply with your first chat ID
+9. Set that chat ID as `telegram.operatorChatId` in config.json for admin access
 
 ## Running file
 The active bot is **`favor.js`** — NOT `bot.js` (legacy, kept for reference only).
 
 ## Architecture
 ```
-favor.js        — Main bot: WhatsApp connection, message handling, multi-model routing, tool loop
-router.js       — Decision router: Gemini classifier + specialist executors
+favor.js        — Main bot: platform connection, message handling, multi-model routing, tool loop
+adapters/telegram.js — Telegram bot adapter (grammy) — sock-compatible interface
+router.js       — Decision router: GPT-4o-mini classifier + keyword overrides + specialist executors
 db.js           — SQLite database layer (sessions, memory, topics, crons, audit, guard logs)
 compactor.js    — Summarizes old messages to save context window space
 cron.js         — Scheduled task engine (reminders, proactive outreach)
@@ -43,7 +58,7 @@ The bot coordinates multiple AI systems:
 - **Kimi (Worker Swarm)** — kimi-k2: structured artifacts (reports, slides, spreadsheets)
 
 Routes: tool, memory, mini, claude, gemini, kimi, agent, full, hybrid
-Router uses Gemini 2.5 Flash for classification, keyword overrides for obvious cases.
+Router uses GPT-4o-mini for classification, keyword overrides for obvious cases.
 
 ## Build Mode
 Shells out to Claude Code CLI to build software projects via WhatsApp.

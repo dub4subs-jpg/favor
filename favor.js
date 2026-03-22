@@ -1,4 +1,8 @@
-const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, DisconnectReason, downloadMediaMessage, getContentType, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+// ─── PLATFORM: WhatsApp (Baileys) or Telegram ───
+// Baileys is loaded conditionally — only when platform is 'whatsapp' (default)
+let makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, DisconnectReason, downloadMediaMessage, getContentType, fetchLatestBaileysVersion;
+const TelegramAdapter = require('./adapters/telegram');
+let telegramAdapter = null; // set when platform === 'telegram'
 const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -49,6 +53,25 @@ fs.watchFile(CONFIG_PATH, { interval: 2000 }, () => {
   const result = reloadConfig();
   if (result.changed) console.log(`[CONFIG] Model switched: ${result.prev} -> ${result.current}`);
 });
+
+// ─── PLATFORM DETECTION ───
+const PLATFORM = config.platform || 'whatsapp'; // 'whatsapp' or 'telegram'
+if (PLATFORM === 'whatsapp') {
+  const baileys = require('@whiskeysockets/baileys');
+  makeWASocket = baileys.default;
+  useMultiFileAuthState = baileys.useMultiFileAuthState;
+  makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+  DisconnectReason = baileys.DisconnectReason;
+  downloadMediaMessage = baileys.downloadMediaMessage;
+  getContentType = baileys.getContentType;
+  fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+  console.log('[PLATFORM] WhatsApp (Baileys)');
+} else if (PLATFORM === 'telegram') {
+  console.log('[PLATFORM] Telegram');
+} else {
+  console.error(`[PLATFORM] Unknown platform: ${PLATFORM}. Use 'whatsapp' or 'telegram'.`);
+  process.exit(1);
+}
 
 // ─── API CLIENTS ───
 const OPENAI_API_KEY = config.api?.openaiApiKey || process.env.OPENAI_API_KEY;
@@ -133,7 +156,9 @@ if (config.alive?.enabled !== false) {
   alive = new AliveEngine(db, openai, {
     modelId: config.model.id,
     maxTokens: 300,
-    operatorContact: config.whatsapp.operatorNumber?.replace('+', '') || '',
+    operatorContact: PLATFORM === 'telegram'
+      ? `tg_${config.telegram?.operatorChatId || ''}`
+      : (config.whatsapp?.operatorNumber?.replace('+', '') || ''),
     botName: config.identity.name || 'Favor',
     morningHourUTC: toUTC(morningLocal),
     eveningHourUTC: toUTC(eveningLocal),
@@ -911,14 +936,21 @@ async function executeTool(name, input, context = {}) {
     }
     case 'send_message': {
       try {
-        const cleaned = (input.contact || '').replace(/[^0-9+]/g, '');
-        if (!cleaned || cleaned.replace('+', '').length < 10) {
-          return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
+        let jid;
+        const contact = input.contact || '';
+        if (PLATFORM === 'telegram') {
+          // Accept tg_CHATID or raw chat ID
+          jid = contact.startsWith('tg_') ? contact : `tg_${contact}`;
+        } else {
+          const cleaned = contact.replace(/[^0-9+]/g, '');
+          if (!cleaned || cleaned.replace('+', '').length < 10) {
+            return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
+          }
+          jid = cleaned.replace('+', '') + '@s.whatsapp.net';
         }
-        const jid = cleaned.replace('+', '') + '@s.whatsapp.net';
         await sock.sendMessage(jid, { text: input.message });
-        console.log(`[PROACTIVE] Sent to ${cleaned}: ${input.message.substring(0, 60)}`);
-        return `Message sent to ${cleaned}`;
+        console.log(`[PROACTIVE] Sent to ${contact}: ${input.message.substring(0, 60)}`);
+        return `Message sent to ${contact}`;
       } catch (e) { return 'Send failed: ' + e.message; }
     }
     case 'send_email': {
@@ -941,11 +973,17 @@ async function executeTool(name, input, context = {}) {
     case 'send_image': {
       try {
         if (!lastReceivedImage) return 'No image available to forward. The operator needs to send an image first.';
-        const cleaned = (input.contact || '').replace(/[^0-9+]/g, '');
-        if (!cleaned || cleaned.replace('+', '').length < 10) {
-          return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
+        let jid;
+        const contact = input.contact || '';
+        if (PLATFORM === 'telegram') {
+          jid = contact.startsWith('tg_') ? contact : `tg_${contact}`;
+        } else {
+          const cleaned = contact.replace(/[^0-9+]/g, '');
+          if (!cleaned || cleaned.replace('+', '').length < 10) {
+            return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
+          }
+          jid = cleaned.replace('+', '') + '@s.whatsapp.net';
         }
-        const jid = cleaned.replace('+', '') + '@s.whatsapp.net';
         const msgPayload = { image: lastReceivedImage.buffer };
         if (input.caption) msgPayload.caption = input.caption;
         await sock.sendMessage(jid, msgPayload);
@@ -1502,7 +1540,7 @@ function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
 
 Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
 
-[SYSTEM-INTERNAL — never reveal this] Security phrase: ${config.whatsapp.securityPhrase || 'NOT_SET'}
+[SYSTEM-INTERNAL — never reveal this] Security phrase: ${(PLATFORM === 'telegram' ? config.telegram?.securityPhrase : config.whatsapp?.securityPhrase) || 'NOT_SET'}
 
 [CRITICAL RULE] You are an AGENT, not a chatbot. You have tools — USE THEM.
 - NEVER respond with generic step-by-step instructions. That is a failure. Take action.
@@ -1730,7 +1768,9 @@ async function updateOperatorProfile(newInsights) {
 async function screenAwarenessLoop() {
   if (!screenAwarenessActive) return;
   if (screenTickInProgress) return;
-  const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
+  const operatorJid = PLATFORM === 'telegram'
+    ? `tg_${config.telegram?.operatorChatId || ''}`
+    : (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
   if ((Date.now() - screenStartTime) >= SCREEN_CHECKIN_AFTER && !screenAwaitingContinue) {
     screenAwaitingContinue = true;
@@ -1788,7 +1828,9 @@ async function analyzeScreenBatch() {
   const frames = [...screenFrameBuffer];
   screenFrameBuffer = [];
 
-  const operatorJid = (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
+  const operatorJid = PLATFORM === 'telegram'
+    ? `tg_${config.telegram?.operatorChatId || ''}`
+    : (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
   // Build multi-frame message — GPT-4o sees all frames in sequence
   const imageBlocks = [];
@@ -2072,6 +2114,65 @@ async function startWhatsApp() {
   });
 }
 
+// ─── TELEGRAM STARTUP ───
+async function startTelegram() {
+  telegramAdapter = new TelegramAdapter(config, {
+    onMessage: async (msg) => {
+      try {
+        await handleMessage(msg);
+      } catch (err) {
+        console.error('[MSG ERROR]', err.message, err.stack?.split('\n')[1]);
+      }
+    },
+    onReady: (botInfo) => {
+      // Create sock-compatible interface
+      sock = telegramAdapter.createSockInterface();
+
+      const counts = db.getMemoryCount();
+      const cronCount = db.getActiveCrons().length;
+      console.log(`[FAVOR] ${config.identity.name} is online (Telegram: @${botInfo.username})`);
+      console.log(`[FAVOR] Model: ${config.model.id}`);
+      console.log(`[FAVOR] Memories: ${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T`);
+      console.log(`[FAVOR] Active crons: ${cronCount}`);
+      console.log(`[FAVOR] Features: vision, voice, topics, crons, compaction, proactive, alive`);
+      db.audit('ready', `Telegram connected (@${botInfo.username}). Model: ${config.model.id}`);
+      cronEngine.start();
+
+      // Alive engine
+      if (alive) {
+        alive.setSock(sock);
+        alive.ensureCrons();
+        console.log('[ALIVE] Connected to Telegram + crons registered');
+      }
+
+      // Sync
+      syncBot.sync('bot', {
+        type: 'connection',
+        summary: `Bot online (Telegram @${botInfo.username}). Model: ${config.model.id}. Memories: ${counts.facts}F/${counts.decisions}D/${counts.preferences}P. Crons: ${cronCount}`,
+        status: 'success',
+        objective: 'Operational — awaiting user messages',
+        fact: `Bot running model ${config.model.id} on Telegram`,
+        fact_type: 'session'
+      });
+      syncBot.createCheckpoint(syncBot.loadState(), 'bot_connected');
+
+      // Send startup confirmation to operator
+      if (!global._startupMessageSent && config.telegram?.operatorChatId) {
+        global._startupMessageSent = true;
+        const operatorJid = `tg_${config.telegram.operatorChatId}`;
+        global._guardianSock = sock;
+        global._guardianOperatorJid = operatorJid;
+        sock.sendMessage(operatorJid, { text: 'Favor is online.' }).catch(e => {
+          console.error('[FAVOR] Could not send startup message:', e.message);
+        });
+      }
+    },
+  });
+
+  await telegramAdapter.start();
+  // sock is set in onReady callback above
+}
+
 // ─── LID-to-phone mapping (Baileys uses LID JIDs for incoming messages) ───
 const lidToPhone = new Map();
 const phoneToLid = new Map();
@@ -2095,6 +2196,8 @@ const pendingAuth = new Set();
 
 
 function resolvePhone(jid) {
+  // Telegram contacts use tg_CHATID format
+  if (jid && jid.startsWith('tg_')) return jid;
   if (jid.endsWith('@lid')) {
     const lidNum = jid.split('@')[0].split(':')[0];
     return lidToPhone.get(lidNum) || null;
@@ -2103,6 +2206,12 @@ function resolvePhone(jid) {
 }
 
 function isOperator(jid) {
+  // Telegram: check operatorChatId
+  if (PLATFORM === 'telegram') {
+    const opChatId = config.telegram?.operatorChatId;
+    if (!opChatId) return true; // no operator set = backwards compat
+    return jid === `tg_${opChatId}` || verifiedNumbers.has(jid);
+  }
   const opNum = (config.whatsapp.operatorNumber || '').replace('+', '');
   if (!opNum) return true; // no operator set = backwards compat
   const phone = resolvePhone(jid);
@@ -2111,10 +2220,15 @@ function isOperator(jid) {
 }
 
 function isStaff(jid) {
-  const staffList = config.whatsapp.staff || [];
+  const pConfig = PLATFORM === 'telegram' ? (config.telegram || {}) : config.whatsapp;
+  const staffList = pConfig.staff || [];
   if (!staffList.length) return false;
   const phone = resolvePhone(jid);
   if (!phone) return false;
+  // Telegram: staff list contains chat IDs (tg_12345 or raw 12345)
+  if (PLATFORM === 'telegram') {
+    return staffList.some(s => jid === `tg_${s}` || jid === s);
+  }
   return staffList.some(s => phone.includes(s.replace('+', '')));
 }
 
@@ -2175,6 +2289,15 @@ function getToolsForRole(role) {
 }
 
 function isAllowed(jid) {
+  // Telegram: bots only receive messages from users who started a chat
+  // Use the same allowlist/open policy from config
+  if (PLATFORM === 'telegram') {
+    const policy = config.telegram?.dmPolicy || 'open';
+    if (policy !== 'allowlist') return true;
+    const allowed = config.telegram?.allowFrom || [];
+    if (!allowed.length) return true;
+    return allowed.includes(jid) || allowed.some(a => jid === `tg_${a}`);
+  }
   if (config.whatsapp.dmPolicy !== 'allowlist') return true;
   const combined = [...new Set([
     ...(config.whatsapp.allowFrom || []),
@@ -2198,6 +2321,11 @@ function isAllowed(jid) {
 }
 
 function isGroup(jid) {
+  if (PLATFORM === 'telegram') {
+    // Telegram group chat IDs are negative numbers
+    if (jid && jid.startsWith('tg_-')) return true;
+    return false;
+  }
   return jid.endsWith('@g.us');
 }
 
@@ -2224,10 +2352,18 @@ function getMessageType(msg) {
   return 'text';
 }
 
-// ─── IMAGE PROCESSING (Baileys) ───
+// ─── MEDIA DOWNLOAD (platform-agnostic) ───
+async function downloadMedia(msg) {
+  if (PLATFORM === 'telegram' && telegramAdapter) {
+    return telegramAdapter.downloadMedia(msg);
+  }
+  return downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+}
+
+// ─── IMAGE PROCESSING ───
 async function processImage(msg) {
   try {
-    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+    const buffer = await downloadMedia(msg);
     if (!buffer) return null;
 
     const mime = msg.message?.imageMessage?.mimetype || msg.message?.stickerMessage?.mimetype || 'image/jpeg';
@@ -2249,10 +2385,10 @@ async function processImage(msg) {
   }
 }
 
-// ─── VOICE PROCESSING (Baileys) ───
+// ─── VOICE PROCESSING ───
 async function processVoice(msg) {
   try {
-    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+    const buffer = await downloadMedia(msg);
     if (!buffer) return null;
 
     const mime = msg.message?.audioMessage?.mimetype || msg.message?.pttMessage?.mimetype || 'audio/ogg';
@@ -2270,10 +2406,10 @@ async function processVoice(msg) {
   }
 }
 
-// ─── VIDEO PROCESSING (WhatsApp) ───
+// ─── VIDEO PROCESSING ───
 async function processVideoMessage(msg) {
   try {
-    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+    const buffer = await downloadMedia(msg);
     if (!buffer) return null;
 
     const size = buffer.length;
@@ -2327,7 +2463,9 @@ const cronEngine = new CronEngine(db, {
 
         const reply = response.choices?.[0]?.message?.content || '';
         if (reply && !reply.includes('SKIP')) {
-          const jid = cron.contact.replace('+', '').replace('@c.us', '').replace('@s.whatsapp.net', '') + '@s.whatsapp.net';
+          const jid = PLATFORM === 'telegram'
+            ? (cron.contact.startsWith('tg_') ? cron.contact : `tg_${cron.contact}`)
+            : cron.contact.replace('+', '').replace('@c.us', '').replace('@s.whatsapp.net', '') + '@s.whatsapp.net';
           if (!sock) { console.warn('[CRON] Socket disconnected, skipping send'); return; }
           await sock.sendMessage(jid, { text: reply });
           console.log(`[CRON] Sent proactive message (${reply.length} chars)`);
@@ -2347,7 +2485,8 @@ async function handleMessage(msg) {
   if (msg.key.fromMe) return;
   const jid = msg.key.remoteJid;
   if (!jid || jid === 'status@broadcast') return;
-  if (isGroup(jid) && !config.whatsapp.allowGroups) return;
+  const platformConfig = PLATFORM === 'telegram' ? (config.telegram || {}) : config.whatsapp;
+  if (isGroup(jid) && !platformConfig.allowGroups) return;
   if (!isAllowed(jid)) return;
 
   // ─── GUARDIAN RATE LIMIT CHECK ───
@@ -2369,6 +2508,11 @@ async function handleMessage(msg) {
 
   console.log(`[${ts}] ${jid}: ${isVoice ? '[voice]' : isImage ? '[image]' : body?.substring(0, 80) || `[${msgType}]`}`);
 
+  // Telegram: log chat ID to help users find their operatorChatId
+  if (PLATFORM === 'telegram' && msg._telegramChatId) {
+    console.log(`[TELEGRAM] Chat ID: ${msg._telegramChatId} (set as telegram.operatorChatId in config.json for admin access)`);
+  }
+
   // ─── ACCESS CONTROL ───
   const role = getRole(jid);
 
@@ -2376,10 +2520,10 @@ async function handleMessage(msg) {
     const phone = resolvePhone(jid);
     const authKey = phone || jid;
     const textLower = (body || '').toLowerCase().trim();
-    const phrase = (config.whatsapp.securityPhrase || '').toLowerCase();
+    const phrase = (platformConfig.securityPhrase || '').toLowerCase();
 
     // Trusted contacts can message the bot directly
-    const trustedList = config.whatsapp.trustedContacts || [];
+    const trustedList = platformConfig.trustedContacts || [];
     const isTrusted = trustedList.some(t => phone && phone.includes(t.replace('+', '')));
 
     if (isTrusted) {
@@ -2388,7 +2532,7 @@ async function handleMessage(msg) {
     } else if (verifiedNumbers.has(authKey)) {
       console.log(`[SECURITY] Previously verified ${authKey} — allowing through`);
       // Fall through to normal message handling below
-    } else if (config.whatsapp.dmPolicy === 'open') {
+    } else if (platformConfig.dmPolicy === 'open') {
       // Business mode — customers can message freely (with limited tools)
       console.log(`[SECURITY] Customer ${authKey} — open mode, limited tools`);
       // Fall through to normal message handling below
@@ -3201,7 +3345,8 @@ function shutdown(signal) {
   console.log(`[FAVOR] ${signal} received. Shutting down...`);
   db.audit('shutdown', signal);
   cronEngine.stop();
-  if (sock) sock.end();
+  if (telegramAdapter) telegramAdapter.stop();
+  else if (sock) sock.end();
   if (notifyServer) notifyServer.close();
   db.close();
   process.exit(0);
@@ -3215,7 +3360,9 @@ process.stderr?.on('error', (e) => { if (e.code !== 'EPIPE') throw e; });
 // ─── LOCAL NOTIFICATION API ───
 // Allows favor-runner and other local processes to push WhatsApp messages
 const NOTIFY_PORT = 3099;
-const OPERATOR_JID = (config.whatsapp?.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
+const OPERATOR_JID = PLATFORM === 'telegram'
+  ? `tg_${config.telegram?.operatorChatId || ''}`
+  : (config.whatsapp?.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
 const notifyServer = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/notify') {
@@ -3241,11 +3388,17 @@ const notifyServer = http.createServer((req, res) => {
         const { to, message } = JSON.parse(body);
         if (!to || !message) { res.writeHead(400); res.end('missing to or message'); return; }
         if (!sock) { res.writeHead(503); res.end('not connected'); return; }
-        const cleaned = to.replace(/[^0-9+]/g, '');
-        if (!cleaned || cleaned.replace('+', '').length < 10) { res.writeHead(400); res.end('invalid phone number'); return; }
-        const jid = cleaned.replace('+', '') + '@s.whatsapp.net';
+        let jid;
+        if (PLATFORM === 'telegram') {
+          // Accept tg_CHATID or raw chat ID
+          jid = to.startsWith('tg_') ? to : `tg_${to}`;
+        } else {
+          const cleaned = to.replace(/[^0-9+]/g, '');
+          if (!cleaned || cleaned.replace('+', '').length < 10) { res.writeHead(400); res.end('invalid phone number'); return; }
+          jid = cleaned.replace('+', '') + '@s.whatsapp.net';
+        }
         await sock.sendMessage(jid, { text: message });
-        console.log(`[SEND API] Sent to ${cleaned}: ${message.substring(0, 60)}`);
+        console.log(`[SEND API] Sent to ${to}: ${message.substring(0, 60)}`);
         res.writeHead(200); res.end('ok');
       } catch (e) {
         console.error('[SEND API] Failed:', e.message);
@@ -3272,8 +3425,17 @@ notifyServer.listen(NOTIFY_PORT, '127.0.0.1', () => {
 console.log(`[FAVOR] Starting ${config.identity.name}...`);
 console.log(`[FAVOR] "${config.identity.tagline}"`);
 console.log(`[FAVOR] Features: vision | voice | topics | crons | compaction | proactive | alive`);
-console.log(`[FAVOR] Using Baileys (same as OpenClaw) — credentials: ${AUTH_DIR}`);
-startWhatsApp().catch(err => {
-  console.error('[FATAL] Failed to start WhatsApp:', err.message);
-  process.exit(1);
-});
+
+if (PLATFORM === 'telegram') {
+  console.log(`[FAVOR] Using Telegram — set botToken in config.json`);
+  startTelegram().catch(err => {
+    console.error('[FATAL] Failed to start Telegram:', err.message);
+    process.exit(1);
+  });
+} else {
+  console.log(`[FAVOR] Using Baileys (WhatsApp) — credentials: ${AUTH_DIR}`);
+  startWhatsApp().catch(err => {
+    console.error('[FATAL] Failed to start WhatsApp:', err.message);
+    process.exit(1);
+  });
+}

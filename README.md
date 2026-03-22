@@ -1,14 +1,14 @@
 # Favor
 
-**Your own AI WhatsApp bot.** Clone it, run one command, scan a QR code — done.
+**Your own AI companion bot.** Works on **Telegram** or **WhatsApp**. Clone it, run one command, and you're live.
 
-Favor gives you a personal AI assistant on WhatsApp with memory, multi-model routing, browser automation, an encrypted vault, video analysis, a built-in software builder, and Guardian — a security and QA framework that protects your bot and any project it manages.
+Favor gives you a personal AI assistant with memory, multi-model routing, browser automation, an encrypted vault, video analysis, a built-in software builder, and Guardian — a security and QA framework that protects your bot and any project it manages.
 
 ---
 
 ## Setup (5 minutes)
 
-You need a **DigitalOcean account** (or any Linux server) and an **OpenAI API key**.
+You need a **Linux server** (or DigitalOcean droplet) and an **OpenAI API key**.
 
 ### 1. Create a server
 
@@ -26,13 +26,28 @@ git clone https://github.com/dub4subs-jpg/favor.git && cd favor && bash setup.sh
 ```
 
 The setup script will:
+- Ask if you want **Telegram** (recommended) or **WhatsApp**
 - Install everything automatically (Node.js, pm2, dependencies)
-- Ask you a few questions (bot name, phone number, API keys)
+- Ask you a few questions (bot name, API keys, etc.)
 - Create your config
-- Show a QR code — scan it with WhatsApp
-- Start your bot and keep it running 24/7
+- **Telegram:** Start your bot — message it on Telegram, done
+- **WhatsApp:** Show a QR code — scan it with WhatsApp
+- Keep your bot running 24/7
 
 That's it. Your bot is live.
+
+---
+
+## Telegram vs WhatsApp
+
+| | Telegram | WhatsApp |
+|---|---------|----------|
+| **Setup** | Message @BotFather, get a token | Need a second phone number |
+| **Extra phone needed?** | No | Yes |
+| **How it works** | Bot API (official, free) | Baileys (unofficial, free) |
+| **Best for** | Most people | People who already have a spare number |
+
+**Telegram is recommended** — anyone can set it up in minutes with zero hassle. No extra phone, no QR code, no second number.
 
 ---
 
@@ -117,8 +132,25 @@ A built-in security and QA framework with two modes:
 - **Per-contact throttling** — 30 requests/hour per person
 - **API key leak detection** — Scans every outgoing message, auto-redacts any exposed keys
 - **Anomaly detection** — Flags unusual spikes in activity
-- **WhatsApp alerts** — Messages you immediately when limits are hit
+- **Alerts** — Messages you immediately when limits are hit
 - Say *"guardian status"* to check current spend and request counts
+
+### Teach Mode
+
+Make your bot smarter over time by teaching it custom commands.
+
+- **"teach: when I say 'status', run pm2 status"** — Creates a reusable command
+- **"my commands"** — Lists everything you've taught it
+- **"delete command #3"** — Removes a taught command
+
+Taught commands run **deterministically** — same trigger, same steps, every time. No AI reasoning needed, zero API cost to execute. The more you teach it, the more personalized it becomes.
+
+**Examples:**
+```
+"teach: when I say 'deploy', pull from git, install deps, and restart the bot"
+"teach: when I say 'morning', search my memory for pending tasks and give me a summary"
+"teach: when I say 'backup', tar my project folder and copy it to /root/backups"
+```
 
 ### Self-Check
 
@@ -128,11 +160,11 @@ Automated health monitoring and cleanup that runs every 3 days:
 - Config validation, security audit (npm vulnerabilities, file permissions)
 - Knowledge file verification
 - Auto-cleanup: old screenshots, video temp files, pm2 logs, stale sessions, old telemetry
-- Alerts you on WhatsApp only if critical issues are found
+- Alerts you only if critical issues are found
 
 ---
 
-## WhatsApp Commands
+## Bot Commands
 
 ```
 /status         Show bot status (memory, model, uptime)
@@ -150,7 +182,7 @@ Automated health monitoring and cleanup that runs every 3 days:
 
 After setup, you can personalize:
 
-- **`config.json`** — Change the bot name, model, limits, and settings
+- **`config.json`** — Change the bot name, model, limits, platform, and settings
 - **`knowledge/*.md`** — Add knowledge files (your bot reads these as expertise)
   - `identity.md` — Who your bot is, its personality
   - `soul.md` — Core values and behavioral boundaries
@@ -158,6 +190,18 @@ After setup, you can personalize:
   - `relationships.md` — People it should know about
   - `user.md` — Info about you (the operator)
   - `playbook.md` — How your bot should handle specific situations
+
+### Switch platforms
+
+To switch between Telegram and WhatsApp, change `"platform"` in `config.json`:
+```json
+"platform": "telegram"
+```
+or
+```json
+"platform": "whatsapp"
+```
+Then restart the bot. Your memory, knowledge, and settings carry over.
 
 ### Guardian limits
 
@@ -180,7 +224,7 @@ Add to `config.json` to customize rate limits:
 ```bash
 ./status.sh     # Check if bot is running, uptime, memory, server health
 ./update.sh     # Pull latest updates and restart the bot
-./relink.sh     # Re-scan QR code if WhatsApp disconnects
+./relink.sh     # Re-scan QR code if WhatsApp disconnects (WhatsApp only)
 ```
 
 ---
@@ -188,21 +232,22 @@ Add to `config.json` to customize rate limits:
 ## Architecture
 
 ```
-favor.js       — Main bot: WhatsApp connection, message handling, tool loop
-router.js      — AI router: classifies messages and picks the best model
-db.js          — SQLite database (memory, sessions, topics, crons, guard logs)
-compactor.js   — Summarizes old messages to save context space
-cron.js        — Scheduled task engine
-vault.js       — AES-256 encrypted storage for sensitive data
-browser.js     — Headless browser automation (Puppeteer)
-video.js       — Video download, transcription, and analysis
-build-mode.js  — Claude Code CLI integration for building software
-guardian.js    — Security framework: code scanning + runtime protection
-guardian/      — Guardian QA engine (validators, analyzers, reporters)
-selfcheck.js   — Automated health monitoring and cleanup
-sync.js        — State sync between bot and external tools
-uiux.js        — UI/UX design system engine
-watchdog.js    — Health monitoring and auto-recovery
+favor.js                — Main bot: message handling, multi-model routing, tool loop
+adapters/telegram.js    — Telegram bot adapter (grammy)
+router.js               — AI router: classifies messages and picks the best model
+db.js                   — SQLite database (memory, sessions, topics, crons, guard logs)
+compactor.js            — Summarizes old messages to save context space
+cron.js                 — Scheduled task engine
+vault.js                — AES-256 encrypted storage for sensitive data
+browser.js              — Headless browser automation (Puppeteer)
+video.js                — Video download, transcription, and analysis
+build-mode.js           — Claude Code CLI integration for building software
+guardian.js             — Security framework: code scanning + runtime protection
+guardian/               — Guardian QA engine (validators, analyzers, reporters)
+selfcheck.js            — Automated health monitoring and cleanup
+sync.js                 — State sync between bot and external tools
+uiux.js                 — UI/UX design system engine
+watchdog.js             — Health monitoring and auto-recovery
 ```
 
 ---
