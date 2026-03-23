@@ -291,15 +291,17 @@ function getClaudeTip() {
 }
 
 // ─── CLAUDE CLI EXECUTOR ───
-function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools } = {}) {
+function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model } = {}) {
   if (!CLAUDE_AVAILABLE) {
     return Promise.reject(new Error('Claude Code CLI not installed'));
   }
   // Use spawn + stdin for long prompts (avoids arg length limits)
   // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
-  const args = (imagePath || allowTools)
-    ? ['--print', '--allowedTools', 'Bash', 'Read', '-']
-    : ['--print', '-'];
+  // model: optional model override (e.g. 'haiku' for fast/cheap tasks)
+  const args = ['--print'];
+  if (model) args.push('--model', model);
+  if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');
+  args.push('-');
   return new Promise((resolve, reject) => {
     const proc = spawn(CLAUDE_BIN, args, {
       timeout: timeoutMs,

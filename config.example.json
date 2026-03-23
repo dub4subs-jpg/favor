@@ -79,6 +79,12 @@
     "connectTimeout": 5000,
     "execTimeout": 15000
   },
+  "phone": {
+    "enabled": false,
+    "host": "your-phone-ip",
+    "adbPort": "5555",
+    "adbBinary": "/usr/local/bin/adb"
+  },
   "screenAwareness": {
     "enabled": false,
     "intervalMs": 180000,

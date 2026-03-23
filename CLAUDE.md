@@ -29,6 +29,7 @@ The active bot is **`favor.js`** — NOT `bot.js` (legacy, kept for reference on
 ## Architecture
 ```
 favor.js        — Main bot: platform connection, message handling, multi-model routing, tool loop
+tool-runner.js  — Standalone tool executor for Claude CLI (laptop, phone, server, memory, web search)
 adapters/telegram.js — Telegram bot adapter (grammy) — sock-compatible interface
 router.js       — Decision router: Claude CLI classifier + keyword overrides + specialist executors
 db.js           — SQLite database layer (sessions, memory, topics, crons, audit, guard logs)
@@ -72,6 +73,7 @@ Router uses Claude CLI for classification (free), keyword overrides for obvious 
 
 ### What uses Claude CLI (free)?
 - Request classification (router)
+- **Tool execution** (tool-runner.js — laptop, phone, server, memory, web search)
 - Chat and mini route responses
 - Conversation compaction (summarization + fact extraction)
 - Alive engine (morning/evening check-ins, memory callbacks)
@@ -83,6 +85,34 @@ Router uses Claude CLI for classification (free), keyword overrides for obvious 
 - Thread detection (follow-up awareness)
 - Gemini analyst route (with Gemini as fallback)
 - Learn from URL / video technique extraction
+
+## Tool Runner (Claude CLI Tool Execution)
+`tool-runner.js` is a standalone tool executor invoked by Claude CLI during the "tool" route. Instead of using GPT-4o function calling (paid), Claude CLI spawns `node tool-runner.js <tool_name> '<json_args>'` via its Bash tool to execute actions directly.
+
+**How it works:**
+1. User sends a tool-like request ("take a screenshot", "open Chrome on my laptop")
+2. Router classifies it as `tool` route
+3. Claude CLI (haiku model, fast) reads the request and calls `tool-runner.js` via Bash
+4. tool-runner.js executes the action and returns the result
+5. If Claude CLI fails, GPT-4o function calling is used as fallback
+
+**Available tools:** laptop_screenshot, laptop_open_app, laptop_open_url, laptop_run_command, laptop_read_file, laptop_list_files, laptop_status, phone_screenshot, phone_open_app, phone_status, phone_shell, server_exec, read_file, write_file, memory_save, memory_search, cron_list, web_search
+
+**Device configuration:** All device IPs and SSH credentials are read from `config.json` (`laptop` and `phone` sections). No hardcoded IPs or usernames.
+
+**Cost impact:** Tool execution that previously required GPT-4o function calling ($2.50/$10 per 1M tokens) now runs through Claude CLI (free via subscription). GPT-4o is only the fallback.
+
+### Cost comparison (approximate monthly for active user)
+| Component | Before (GPT-4o only) | After (Claude CLI primary) |
+|-----------|---------------------|---------------------------|
+| Chat/conversation | $15-30/mo | $0 (Claude CLI) |
+| Classification | $2-5/mo | $0 (Claude CLI) |
+| Tool execution | $10-20/mo | $0 (Claude CLI), GPT-4o fallback only |
+| Compaction | $3-5/mo | $0 (Claude CLI) |
+| Whisper/TTS/embeddings | $2-5/mo | $2-5/mo (still OpenAI) |
+| **Total** | **$30-65/mo** | **$2-5/mo + $20-100 subscription** |
+
+For users already paying for Claude Pro ($20/mo) or Max ($100/mo), the bot runs ~95% free.
 
 ## Build Mode
 Shells out to Claude Code CLI to build software projects via WhatsApp.
@@ -138,11 +168,13 @@ Automated health + cleanup running every 3 days at 5am EST:
 
 ## Key patterns
 
-### Tool use loop (favor.js)
-The bot can call tools (memory, server, web search, crons, topics, vault, browser, build, guardian). The tool loop:
-1. Send messages to OpenAI API with tools (function calling — requires GPT-4o)
-2. If response has tool_calls, execute tools and append results
-3. Repeat until the AI gives a text response
+### Tool execution (favor.js)
+Tool requests go through two layers:
+1. **Claude CLI + tool-runner.js (free)** — Claude CLI (haiku) reads the request, picks a tool, runs `node tool-runner.js <tool> '<args>'` via Bash. If the tool sends its own result (e.g. screenshot image), the reply is `__SKIP__` and no text is sent.
+2. **GPT-4o function calling (fallback)** — If Claude CLI fails, falls back to OpenAI tool loop:
+   - Send messages to OpenAI API with tools (function calling — requires GPT-4o)
+   - If response has tool_calls, execute tools and append results
+   - Repeat until the AI gives a text response
 
 ### Claude CLI pattern
 All non-tool-loop AI calls use Claude Code CLI via `runClaudeCLI()`:

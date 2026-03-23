@@ -3218,8 +3218,44 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
       decision.route = 'full'; // then full reasoning with injected memory
     }
 
-    // ─── ROUTE: tool / hybrid / full — GPT-4o plans, mini executes tools ───
-    // NOTE: chat/full are handled by Claude CLI above — only tool/hybrid/agent use GPT-4o
+    // ─── ROUTE: tool / hybrid / agent — Try Claude CLI first (free), fall back to GPT-4o ───
+    if (!reply && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent')) {
+      // First attempt: Claude CLI with tool-runner.js (free via Max/Pro subscription)
+      try {
+        const toolRunnerPath = path.join(__dirname, 'tool-runner.js');
+        const operatorNum = PLATFORM === 'telegram'
+          ? (config.telegram?.operatorChatId || '')
+          : (config.whatsapp?.operatorNumber || '');
+        const toolPrompt = `DO NOT EXPLAIN. Execute immediately using Bash.
+
+User wants: "${userText}"
+
+Tool runner: node ${toolRunnerPath} TOOL 'JSON'
+
+Tools: laptop_open_app({"app":"path"}), laptop_open_url({"url":"..."}), laptop_run_command({"command":"..."}), laptop_status, phone_open_app({"app":"name"}), phone_status, phone_shell({"command":"..."}), server_exec({"command":"..."}), memory_search({"query":"..."}), cron_list, web_search({"query":"..."})
+
+For SCREENSHOTS: phone_screenshot and laptop_screenshot produce a file path. After running the tool, send the image:
+curl -s -X POST http://localhost:3099/send-image -H 'Content-Type: application/json' -d '{"to":"${operatorNum}","image_path":"THE_PATH_FROM_TOOL","caption":"Screenshot"}'
+
+Run the Bash command NOW.`;
+        const cliResult = await runClaudeCLI(toolPrompt, 45000, { allowTools: true, model: 'haiku' });
+        if (cliResult && cliResult.trim()) {
+          // If tool already sent an image/result via /trigger, don't repeat
+          const lower = cliResult.toLowerCase();
+          if (lower.includes('screenshot captured') || lower.includes('sent to whatsapp') || lower.includes('__image_sent__') || lower.includes('sent.') || lower.includes('image sent')) {
+            reply = '__SKIP__'; // Image already sent, no text reply needed
+          } else {
+            reply = cliResult;
+          }
+          modelUsed = 'claude-cli-tools';
+          history.push({ role: 'assistant', content: reply === '__SKIP__' ? '(screenshot sent)' : reply });
+        }
+      } catch (cliErr) {
+        console.warn('[ROUTER] Claude CLI tool route failed, falling back to GPT-4o:', cliErr.message);
+      }
+    }
+
+    // ─── ROUTE: tool / hybrid / agent — GPT-4o fallback (if Claude CLI failed) ───
     if (!reply && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent')) {
       // First call: GPT-4o (full reasoning with all context)
       let response = await openai.chat.completions.create({
@@ -3306,6 +3342,13 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
 
     // Image was already sent by laptop_screenshot tool — skip text reply
     if (reply === '__IMAGE_SENT__') return;
+
+    // Tool already sent the result (e.g. screenshot image via Claude CLI) — no text reply needed
+    if (reply === '__SKIP__') {
+      console.log('[ROUTER] Skipping text reply — tool already sent result');
+      // Still log telemetry above, just don't send text
+      return;
+    }
 
     // ─── CLAUDE CLI TIP: One-time suggestion if CLI not installed ───
     if (!isClaudeAvailable() && modelUsed && !modelUsed.startsWith('claude-cli')) {
@@ -3484,6 +3527,99 @@ const notifyServer = http.createServer((req, res) => {
         res.writeHead(200); res.end('ok');
       } catch (e) {
         console.error('[SEND API] Failed:', e.message);
+        res.writeHead(500); res.end(e.message);
+      }
+    });
+  } else if (req.method === 'POST' && req.url === '/trigger') {
+    // Trigger tool actions (screenshot capture, etc.) — used by tool-runner.js
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { action, args } = JSON.parse(body);
+        if (!action) { res.writeHead(400); res.end('missing action'); return; }
+        if (!sock) { res.writeHead(503); res.end('not connected'); return; }
+        if (action === 'laptop_screenshot') {
+          const result = await captureScreenshotBuffer();
+          if (!result) { res.writeHead(500); res.end('screenshot failed'); return; }
+          await sock.sendMessage(OPERATOR_JID, { image: result.buffer, caption: 'Laptop Screenshot' });
+          res.writeHead(200); res.end('sent');
+        } else if (action === 'phone_screenshot') {
+          const imgResult = await executeTool('phone_screenshot', {}, { contact: OPERATOR_JID });
+          res.writeHead(200); res.end(imgResult || 'done');
+        } else {
+          const toolResult = await executeTool(action, args || {}, { contact: OPERATOR_JID });
+          res.writeHead(200); res.end(String(toolResult || 'done'));
+        }
+      } catch (e) {
+        console.error('[TRIGGER] Failed:', e.message);
+        res.writeHead(500); res.end(e.message);
+      }
+    });
+  } else if (req.method === 'POST' && req.url === '/send-image') {
+    // Send an image to a contact — used by Claude CLI tool route for screenshots
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', async () => {
+      try {
+        const body = Buffer.concat(chunks);
+        const contentType = req.headers['content-type'] || '';
+
+        if (contentType.includes('multipart/form-data')) {
+          const boundary = contentType.split('boundary=')[1];
+          if (!boundary) { res.writeHead(400); res.end('no boundary'); return; }
+
+          const bodyStr = body.toString('latin1');
+          const parts = bodyStr.split('--' + boundary).filter(p => p.trim() && p.trim() !== '--');
+
+          let to = null, imagePath = null, caption = '';
+          for (const part of parts) {
+            if (part.includes('name="to"')) {
+              to = part.split('\r\n\r\n')[1]?.trim();
+            } else if (part.includes('name="caption"')) {
+              caption = part.split('\r\n\r\n')[1]?.trim() || '';
+            } else if (part.includes('name="image"') || part.includes('filename=')) {
+              const val = part.split('\r\n\r\n')[1]?.trim();
+              if (val && val.startsWith('/')) imagePath = val;
+            }
+          }
+
+          if (!to || !imagePath) { res.writeHead(400); res.end('missing to or image path'); return; }
+          if (!sock) { res.writeHead(503); res.end('not connected'); return; }
+          if (!fs.existsSync(imagePath)) { res.writeHead(400); res.end('image file not found'); return; }
+
+          let jid;
+          if (PLATFORM === 'telegram') {
+            jid = to.startsWith('tg_') ? to : `tg_${to}`;
+          } else {
+            const cleaned = to.replace(/[^0-9+]/g, '');
+            jid = cleaned.replace('+', '') + '@s.whatsapp.net';
+          }
+          const imageBuffer = fs.readFileSync(imagePath);
+          await sock.sendMessage(jid, { image: imageBuffer, caption: caption || undefined });
+          console.log(`[SEND-IMAGE API] Sent image to ${to}: ${imagePath}`);
+          res.writeHead(200); res.end('ok');
+        } else {
+          // JSON body with file path
+          const data = JSON.parse(body.toString());
+          if (!data.to || !data.image_path) { res.writeHead(400); res.end('missing to or image_path'); return; }
+          if (!sock) { res.writeHead(503); res.end('not connected'); return; }
+          if (!fs.existsSync(data.image_path)) { res.writeHead(400); res.end('image file not found'); return; }
+
+          let jid;
+          if (PLATFORM === 'telegram') {
+            jid = data.to.startsWith('tg_') ? data.to : `tg_${data.to}`;
+          } else {
+            const cleaned = data.to.replace(/[^0-9+]/g, '');
+            jid = cleaned.replace('+', '') + '@s.whatsapp.net';
+          }
+          const imageBuffer = fs.readFileSync(data.image_path);
+          await sock.sendMessage(jid, { image: imageBuffer, caption: data.caption || undefined });
+          console.log(`[SEND-IMAGE API] Sent image to ${data.to}: ${data.image_path}`);
+          res.writeHead(200); res.end('ok');
+        }
+      } catch (e) {
+        console.error('[SEND-IMAGE API] Failed:', e.message);
         res.writeHead(500); res.end(e.message);
       }
     });
