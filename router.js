@@ -159,6 +159,12 @@ const GEMINI_KEYWORDS = [
   'competitor analysis', 'analyze this data', 'long document',
 ];
 
+const REMOTE_KEYWORDS = [
+  'start remote', 'remote session', 'remote code', 'start coding',
+  'open remote', 'code from phone', 'code on phone', 'remote control',
+  'start claude code', 'launch claude code',
+];
+
 const SELFCHECK_KEYWORDS = [
   'self check', 'selfcheck', 'self-check', 'system check', 'system status',
   'health report', 'run diagnostics', 'clean up', 'cleanup', 'sanitize',
@@ -230,6 +236,9 @@ function keywordOverride(message) {
   }
   if (GUARDIAN_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: guardian scan', classifier_ms: 0 };
+  }
+  if (REMOTE_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'tool', escalation_score: 3, needs_review: false, reason: 'keyword override: remote code session', classifier_ms: 0 };
   }
   if (SELFCHECK_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: self-check', classifier_ms: 0 };

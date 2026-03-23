@@ -96,7 +96,15 @@ Router uses Claude CLI for classification (free), keyword overrides for obvious 
 4. tool-runner.js executes the action and returns the result
 5. If Claude CLI fails, GPT-4o function calling is used as fallback
 
-**Available tools:** laptop_screenshot, laptop_open_app, laptop_open_url, laptop_run_command, laptop_read_file, laptop_list_files, laptop_status, phone_screenshot, phone_open_app, phone_status, phone_shell, server_exec, read_file, write_file, memory_save, memory_search, cron_list, web_search
+**Available tools:** laptop_screenshot, laptop_open_app, laptop_open_url, laptop_run_command, laptop_read_file, laptop_list_files, laptop_status, phone_screenshot, phone_open_app, phone_status, phone_shell, server_exec, read_file, write_file, memory_save, memory_search, cron_list, web_search, start_remote
+
+## Remote Code Sessions
+Message the bot "start remote" and it spins up a Claude Code session in tmux, then sends you a clickable link. Open the link on your phone — you're now coding on your server from your phone, no SSH client needed.
+
+- Uses Claude Code's Remote Control (`claude --rc`)
+- Session runs in tmux (survives disconnects)
+- Requires Claude Pro ($20/mo) or Max ($100/mo) subscription
+- Trigger phrases: "start remote", "remote session", "code from phone", "start coding"
 
 **Device configuration:** All device IPs and SSH credentials are read from `config.json` (`laptop` and `phone` sections). No hardcoded IPs or usernames.
 

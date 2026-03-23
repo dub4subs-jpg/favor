@@ -671,6 +671,7 @@ const TOOLS = [
     properties: {},
   }),
   // ─── SELF-CHECK TOOL ───
+  oaiTool('start_remote', 'Start a remote Claude Code session. Spins up a tmux session with claude --rc and sends the session URL to the operator. Use when operator says "start remote", "remote session", "code from phone", etc.', { type: 'object', properties: { directory: { type: 'string', description: 'Working directory for the session (default: /root)' } } }),
   oaiTool('selfcheck', 'Run a self-check on the bot — checks process health, system resources, database integrity, config validity, security, and runs cleanup/sanitization. Use when operator asks for "self check", "health report", "system status", "clean up", or "sanitize".', {
     type: 'object',
     properties: {},
@@ -1500,6 +1501,34 @@ ${pageContent}`;
       return guardian.formatGuardStatus();
     }
     // ─── SELF-CHECK ───
+    case 'start_remote': {
+      try {
+        const dir = input.directory || '/root';
+        const { execSync } = require('child_process');
+        try { execSync('tmux kill-session -t claude-rc 2>/dev/null'); } catch {}
+        execSync(`tmux new-session -d -s claude-rc -c "${dir}"`);
+        execSync(`tmux send-keys -t claude-rc "claude --remote-control" Enter`);
+        let sessionUrl = null;
+        for (let i = 0; i < 15; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const pane = execSync('tmux capture-pane -t claude-rc -p', { encoding: 'utf8' });
+            const match = pane.match(/(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+)/);
+            if (match) { sessionUrl = match[1]; break; }
+            if (pane.includes('Yes, I trust this folder')) {
+              execSync('tmux send-keys -t claude-rc Enter');
+            }
+          } catch {}
+        }
+        if (sessionUrl) {
+          await sock.sendMessage(context.contact, { text: `🖥️ *Remote Code Session Ready*\n\nOpen on your phone:\n${sessionUrl}\n\nRunning in: ${dir}\nSession: tmux (survives disconnects)` });
+          return '__IMAGE_SENT__';
+        }
+        return 'Remote session started but could not capture URL. Check tmux session "claude-rc" manually.';
+      } catch (e) {
+        return 'Failed to start remote session: ' + e.message;
+      }
+    }
     case 'selfcheck': {
       await sock.sendMessage(context.contact, { text: '🛡️ *Self-Check* — Running health checks and cleanup...' });
       try {

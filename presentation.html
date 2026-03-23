@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Favor — Your AI WhatsApp Bot</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --text: #e8e8e8;
+    --text-dim: #888;
+    --accent: #25D366;
+    --accent2: #128C7E;
+    --accent-glow: rgba(37, 211, 102, 0.15);
+    --purple: #a78bfa;
+    --blue: #60a5fa;
+    --orange: #fb923c;
+    --red: #f87171;
+    --pink: #f472b6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ─── SLIDE CONTAINER ─── */
+  .deck {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 60px 80px;
+    opacity: 0;
+    transform: translateX(40px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    pointer-events: none;
+    overflow-y: auto;
+  }
+
+  .slide.active {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+  }
+
+  .slide.prev {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+
+  /* ─── TYPOGRAPHY ─── */
+  h1 {
+    font-size: clamp(2.5rem, 5vw, 4.5rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin-bottom: 24px;
+  }
+
+  h2 {
+    font-size: clamp(1.8rem, 3.5vw, 3rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 20px;
+  }
+
+  h3 {
+    font-size: clamp(1.2rem, 2vw, 1.6rem);
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--accent);
+  }
+
+  p, li {
+    font-size: clamp(1rem, 1.5vw, 1.25rem);
+    line-height: 1.7;
+    color: var(--text-dim);
+  }
+
+  .highlight { color: var(--accent); }
+  .purple { color: var(--purple); }
+  .blue { color: var(--blue); }
+  .orange { color: var(--orange); }
+  .pink { color: var(--pink); }
+
+  .subtitle {
+    font-size: clamp(1.1rem, 1.8vw, 1.4rem);
+    color: var(--text-dim);
+    font-weight: 400;
+    max-width: 700px;
+    text-align: center;
+  }
+
+  /* ─── CODE BLOCKS ─── */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(0.8rem, 1.2vw, 1rem);
+    line-height: 1.8;
+    overflow-x: auto;
+    width: 100%;
+    max-width: 800px;
+    margin: 16px 0;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--surface);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+
+  .comment { color: #555; }
+  .cmd { color: var(--accent); }
+  .flag { color: var(--purple); }
+  .string { color: var(--orange); }
+
+  /* ─── LAYOUTS ─── */
+  .content {
+    max-width: 900px;
+    width: 100%;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    max-width: 1000px;
+    width: 100%;
+  }
+
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+    max-width: 1100px;
+    width: 100%;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+  }
+
+  .card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 30px var(--accent-glow);
+    transition: all 0.3s ease;
+  }
+
+  .card h3 { margin-bottom: 12px; }
+  .card p { font-size: 0.95rem; }
+
+  ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  ul li {
+    padding: 8px 0;
+    padding-left: 24px;
+    position: relative;
+  }
+
+  ul li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 16px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  /* ─── OS TABS ─── */
+  .os-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 0;
+    max-width: 800px;
+    width: 100%;
+  }
+
+  .os-tab {
+    padding: 12px 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    transition: all 0.2s;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .os-tab.active {
+    background: var(--surface2);
+    color: var(--accent);
+    border-color: var(--accent);
+    border-bottom: 1px solid var(--surface2);
+  }
+
+  .os-content {
+    display: none;
+    width: 100%;
+    max-width: 800px;
+  }
+
+  .os-content.active { display: block; }
+
+  .os-content pre {
+    border-radius: 0 0 12px 12px;
+    margin-top: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ─── FEATURE GRID ─── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    max-width: 1000px;
+    width: 100%;
+  }
+
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .feature .icon {
+    font-size: 2rem;
+    margin-bottom: 8px;
+  }
+
+  .feature h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .feature p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  /* ─── TABLE ─── */
+  table {
+    width: 100%;
+    max-width: 800px;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+
+  th, td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.95rem;
+  }
+
+  th {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  td { color: var(--text-dim); }
+
+  /* ─── BADGE ─── */
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .badge.required { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+  .badge.optional { background: rgba(167, 139, 250, 0.15); color: var(--purple); }
+  .badge.free { background: rgba(37, 211, 102, 0.15); color: var(--accent); }
+
+  /* ─── NAV ─── */
+  .nav {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    z-index: 100;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 40px;
+    padding: 10px 20px;
+  }
+
+  .nav button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .nav button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .nav .counter {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    min-width: 60px;
+    text-align: center;
+  }
+
+  .progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: var(--accent);
+    transition: width 0.4s ease;
+    z-index: 100;
+  }
+
+  /* ─── CHAT BUBBLE DEMO ─── */
+  .chat {
+    max-width: 500px;
+    width: 100%;
+  }
+
+  .bubble {
+    padding: 12px 16px;
+    border-radius: 12px;
+    margin: 8px 0;
+    max-width: 85%;
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .bubble.user {
+    background: var(--accent2);
+    color: white;
+    margin-left: auto;
+    border-bottom-right-radius: 4px;
+  }
+
+  .bubble.bot {
+    background: var(--surface2);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+
+  .bubble .name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+
+  /* ─── RESPONSIVE ─── */
+  @media (max-width: 768px) {
+    .slide { padding: 30px 24px; }
+    .two-col, .three-col, .feature-grid { grid-template-columns: 1fr; }
+    .os-tab { padding: 10px 16px; font-size: 0.85rem; }
+    pre { padding: 16px; font-size: 0.75rem; }
+  }
+
+  /* ─── ANIMATION ─── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .slide.active .animate {
+    animation: fadeUp 0.6s ease forwards;
+  }
+
+  .slide.active .animate:nth-child(2) { animation-delay: 0.1s; }
+  .slide.active .animate:nth-child(3) { animation-delay: 0.2s; }
+  .slide.active .animate:nth-child(4) { animation-delay: 0.3s; }
+  .slide.active .animate:nth-child(5) { animation-delay: 0.4s; }
+
+  .logo-text {
+    font-size: clamp(4rem, 10vw, 8rem);
+    font-weight: 900;
+    letter-spacing: -0.05em;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="deck" id="deck">
+
+  <!-- SLIDE 1: Title -->
+  <div class="slide active">
+    <div class="logo-text animate">favor</div>
+    <h2 class="animate" style="font-weight:400; color:var(--text-dim); margin-top:8px;">Your AI WhatsApp Bot</h2>
+    <p class="subtitle animate" style="margin-top:24px;">Clone it. Run one command. Scan a QR code. Done.<br>Multi-model AI, memory, browser automation, encrypted vault, and more.</p>
+  </div>
+
+  <!-- SLIDE 2: What is Favor -->
+  <div class="slide">
+    <h2 class="animate">What is <span class="highlight">Favor</span>?</h2>
+    <div class="two-col animate">
+      <div>
+        <p style="margin-bottom:16px;">A personal AI assistant that lives in your WhatsApp. Not a chatbot — an <strong style="color:var(--text)">agent</strong> that takes action.</p>
+        <ul>
+          <li>Routes to the best AI model for each task</li>
+          <li>Remembers everything you tell it</li>
+          <li>Browses the web, fills forms, shops for you</li>
+          <li>Builds software with Claude Code</li>
+          <li>Runs scheduled tasks and check-ins</li>
+          <li>Protects itself with Guardian security</li>
+        </ul>
+      </div>
+      <div class="chat">
+        <div class="bubble user">Take a screenshot of my laptop</div>
+        <div class="bubble bot"><span class="name">Favor</span>Got it. Here's your screen right now.</div>
+        <div class="bubble user">Search my email for the Amazon receipt</div>
+        <div class="bubble bot"><span class="name">Favor</span>Found 3 results. The most recent is from March 18 — $47.99 for wireless earbuds. Want me to read the full email?</div>
+        <div class="bubble user">Build me a todo app with React</div>
+        <div class="bubble bot"><span class="name">Favor</span>Planning the build now. Phase 1: project scaffold, Phase 2: components, Phase 3: state management...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 3: What You Need -->
+  <div class="slide">
+    <h2 class="animate">What you need</h2>
+    <table class="animate">
+      <thead>
+        <tr><th>Service</th><th>Cost</th><th>Required?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>OpenAI API Key</td><td>~$5-20/mo (pay-per-use)</td><td><span class="badge required">Required</span></td></tr>
+        <tr><td>Server (DigitalOcean, AWS, any VPS)</td><td>$6/mo</td><td><span class="badge required">Required</span></td></tr>
+        <tr><td>Gemini API Key</td><td>Free</td><td><span class="badge free">Free</span></td></tr>
+        <tr><td>Brave Search API Key</td><td>Free tier</td><td><span class="badge optional">Optional</span></td></tr>
+        <tr><td>Claude Code (for Build Mode)</td><td>$20/mo</td><td><span class="badge optional">Optional</span></td></tr>
+      </tbody>
+    </table>
+    <p class="animate" style="margin-top:16px; color:var(--text-dim); text-align:center;">Only OpenAI + a server are required. Everything else enhances capabilities.</p>
+  </div>
+
+  <!-- SLIDE 4: Install — Prerequisites -->
+  <div class="slide">
+    <h2 class="animate">Step 1: <span class="highlight">Prerequisites</span></h2>
+    <div class="three-col animate">
+      <div class="card">
+        <h3 style="color:var(--orange);">Linux</h3>
+        <p>Ubuntu 20.04+ or Debian 11+ recommended. Most VPS providers (DigitalOcean, Linode, Hetzner) work out of the box.</p>
+        <pre style="font-size:0.8rem; margin-top:12px;"><span class="comment"># Already has everything</span>
+<span class="comment"># Just need git + curl</span>
+<span class="cmd">sudo apt update</span>
+<span class="cmd">sudo apt install</span> git curl</pre>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--blue);">macOS</h3>
+        <p>macOS 12+ with Homebrew. Works on both Intel and Apple Silicon Macs.</p>
+        <pre style="font-size:0.8rem; margin-top:12px;"><span class="comment"># Install Homebrew first</span>
+<span class="cmd">/bin/bash</span> -c <span class="string">"$(curl -fsSL
+  https://raw.githubusercontent.com
+  /Homebrew/install/HEAD/install.sh)"</span>
+
+<span class="comment"># Then install Node.js</span>
+<span class="cmd">brew install</span> node git</pre>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--purple);">Windows</h3>
+        <p>Windows 10/11 with WSL2 (Windows Subsystem for Linux). Runs Linux inside Windows.</p>
+        <pre style="font-size:0.8rem; margin-top:12px;"><span class="comment"># Open PowerShell as Admin</span>
+<span class="cmd">wsl --install</span>
+
+<span class="comment"># Restart, open Ubuntu from
+# Start Menu, then follow
+# the Linux instructions</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 5: Install — Clone & Setup -->
+  <div class="slide">
+    <h2 class="animate">Step 2: <span class="highlight">Install Favor</span></h2>
+    <p class="subtitle animate" style="margin-bottom: 24px;">Same command on all platforms. One line to clone, one script to set up.</p>
+
+    <div class="os-tabs animate" id="installTabs">
+      <div class="os-tab active" onclick="switchOS('install','linux')">Linux / VPS</div>
+      <div class="os-tab" onclick="switchOS('install','mac')">macOS</div>
+      <div class="os-tab" onclick="switchOS('install','win')">Windows (WSL)</div>
+    </div>
+
+    <div class="os-content active" id="install-linux">
+      <pre><span class="comment"># SSH into your server (or open terminal)</span>
+<span class="cmd">ssh</span> root@your-server-ip
+
+<span class="comment"># Clone and run setup</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># Setup will:</span>
+<span class="comment">#   - Install Node.js 20, pm2, dependencies</span>
+<span class="comment">#   - Ask for your bot name, phone number, API keys</span>
+<span class="comment">#   - Show a QR code to link WhatsApp</span>
+<span class="comment">#   - Start the bot with pm2 (runs 24/7)</span></pre>
+    </div>
+
+    <div class="os-content" id="install-mac">
+      <pre><span class="comment"># Open Terminal.app</span>
+
+<span class="comment"># Clone and run setup</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># Same setup flow — installs deps, asks questions,</span>
+<span class="comment"># shows QR code. On Mac, the bot runs in the</span>
+<span class="comment"># background via pm2 as long as your Mac is awake.</span>
+<span class="comment">#</span>
+<span class="comment"># Tip: For 24/7 uptime, deploy to a $6/mo VPS instead.</span></pre>
+    </div>
+
+    <div class="os-content" id="install-win">
+      <pre><span class="comment"># Open Ubuntu (from Start Menu after WSL install)</span>
+
+<span class="comment"># Clone and run setup</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># Runs inside WSL's Linux environment.</span>
+<span class="comment"># Same setup flow as Linux.</span>
+<span class="comment">#</span>
+<span class="comment"># Note: Bot stops if you close the WSL window.</span>
+<span class="comment"># For 24/7, deploy to a VPS ($6/mo DigitalOcean).</span></pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 6: Scan QR -->
+  <div class="slide">
+    <h2 class="animate">Step 3: <span class="highlight">Scan the QR Code</span></h2>
+    <div class="content animate" style="text-align:center;">
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:40px; display:inline-block; margin:20px 0;">
+        <div style="width:200px; height:200px; background:white; border-radius:8px; display:flex; align-items:center; justify-content:center; margin:0 auto;">
+          <span style="font-size:5rem;">&#9641;</span>
+        </div>
+        <p style="margin-top:16px; font-size:0.9rem;">QR code appears in your terminal</p>
+      </div>
+      <div style="max-width:500px; margin:0 auto; text-align:left;">
+        <ul>
+          <li>Open WhatsApp on your phone</li>
+          <li>Go to <strong style="color:var(--text)">Settings</strong> &rarr; <strong style="color:var(--text)">Linked Devices</strong></li>
+          <li>Tap <strong style="color:var(--text)">Link a Device</strong></li>
+          <li>Point your camera at the QR code in the terminal</li>
+          <li>That's it &mdash; your bot is now live on WhatsApp</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 7: Features Overview -->
+  <div class="slide">
+    <h2 class="animate">Features</h2>
+    <div class="feature-grid animate">
+      <div class="feature">
+        <div class="icon">&#129504;</div>
+        <h4>Multi-Model AI</h4>
+        <p>GPT-4o, Gemini, Claude, Kimi &mdash; auto-routed</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#128024;</div>
+        <h4>Memory</h4>
+        <p>Remembers facts, preferences, decisions</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#127760;</div>
+        <h4>Browser</h4>
+        <p>Browse, fill forms, shop, take screenshots</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#128274;</div>
+        <h4>Vault</h4>
+        <p>AES-256 encrypted storage for sensitive data</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#127909;</div>
+        <h4>Video</h4>
+        <p>YouTube/TikTok download, transcribe, analyze</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#128736;</div>
+        <h4>Build Mode</h4>
+        <p>Build software via Claude Code CLI</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#128218;</div>
+        <h4>Teach Mode</h4>
+        <p>Teach custom commands &mdash; zero API cost</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#128737;</div>
+        <h4>Guardian</h4>
+        <p>Rate limits, leak detection, security scans</p>
+      </div>
+      <div class="feature">
+        <div class="icon">&#9200;</div>
+        <h4>Scheduled Tasks</h4>
+        <p>Reminders, recurring check-ins, automations</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 8: Multi-Model Routing -->
+  <div class="slide">
+    <h2 class="animate">Multi-Model <span class="highlight">Routing</span></h2>
+    <p class="subtitle animate">Every message gets classified and sent to the best AI for the job.</p>
+    <div class="two-col animate" style="margin-top:24px;">
+      <div>
+        <table>
+          <tr><td><strong style="color:var(--text)">GPT-4o</strong></td><td>Reasoning, planning, tool use</td></tr>
+          <tr><td><strong style="color:var(--text)">Claude Code</strong></td><td>Engineering, coding, debugging</td></tr>
+          <tr><td><strong style="color:var(--text)">Gemini</strong></td><td>Large documents, research</td></tr>
+          <tr><td><strong style="color:var(--text)">Kimi</strong></td><td>Reports, slides, spreadsheets</td></tr>
+          <tr><td><strong style="color:var(--text)">GPT-4o-mini</strong></td><td>Simple Q&A, formatting (cheap)</td></tr>
+        </table>
+      </div>
+      <div>
+        <p style="margin-bottom:12px;">The router uses keyword detection + GPT-4o-mini classification to decide the route. Zero config needed.</p>
+        <p><span class="highlight">Examples:</span></p>
+        <ul>
+          <li><em>"Fix the login bug"</em> &rarr; Claude Code</li>
+          <li><em>"Analyze this PDF"</em> &rarr; Gemini</li>
+          <li><em>"Make me a report"</em> &rarr; Kimi</li>
+          <li><em>"What's up?"</em> &rarr; GPT-4o (chat)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 9: Teach Mode -->
+  <div class="slide">
+    <h2 class="animate">Teach Mode <span style="color:var(--text-dim); font-weight:400; font-size:0.6em;">&mdash; make it yours</span></h2>
+    <div class="two-col animate">
+      <div>
+        <p style="margin-bottom:16px;">Teach your bot custom commands that run <strong style="color:var(--text);">deterministically</strong> &mdash; same trigger, same steps, every time. <span class="highlight">Zero API cost</span> to execute.</p>
+        <pre style="font-size:0.85rem;"><span class="comment"># Teaching a command</span>
+<span class="string">"teach: when I say 'deploy',
+ pull from git, install deps,
+ and restart the bot"</span>
+
+<span class="comment"># Using it later</span>
+<span class="string">"deploy"</span>
+<span class="cmd">&#x2713; git pull</span>
+<span class="cmd">&#x2713; npm install</span>
+<span class="cmd">&#x2713; pm2 restart</span>
+
+<span class="comment"># Managing commands</span>
+<span class="string">"my commands"</span>    <span class="comment"># list all</span>
+<span class="string">"delete command #3"</span>  <span class="comment"># remove</span></pre>
+      </div>
+      <div>
+        <h3 style="color:var(--purple);">Why it's powerful</h3>
+        <ul>
+          <li>The more you teach it, the more personalized it becomes</li>
+          <li>Pipelines run tool-by-tool &mdash; no AI hallucination</li>
+          <li>Can chain any tool: memory, server, browser, email, vault</li>
+          <li>Commands are per-user in group chats</li>
+          <li>Track usage stats (execution count, last run)</li>
+        </ul>
+        <div style="margin-top:20px; padding:16px; background:var(--accent-glow); border-radius:12px; border:1px solid rgba(37,211,102,0.3);">
+          <p style="color:var(--accent); font-weight:600; font-size:0.9rem;">The bot gets smarter the more you use it &mdash; without costing more.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 10: Alive Engine -->
+  <div class="slide">
+    <h2 class="animate">Alive Engine <span style="color:var(--text-dim); font-weight:400; font-size:0.6em;">&mdash; it feels alive</span></h2>
+    <div class="three-col animate">
+      <div class="card">
+        <h3 style="color:var(--orange);">Morning Check-in</h3>
+        <p>Greets you each morning with context from memory &mdash; pending tasks, upcoming deadlines, yesterday's decisions.</p>
+        <div class="bubble bot" style="margin-top:16px; font-size:0.85rem;">
+          <span class="name">Favor</span>
+          Morning! You've got the invoice for Jerry due today, and that Kendra refund is coming up March 29th. Anything else on deck?
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--blue);">Evening Wind-down</h3>
+        <p>Casual end-of-day recap. Skips itself if nothing worth saying &mdash; never feels forced.</p>
+        <div class="bubble bot" style="margin-top:16px; font-size:0.85rem;">
+          <span class="name">Favor</span>
+          Quiet day today. Hope you're good. Tomorrow's Tuesday &mdash; nothing scheduled.
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--pink);">Memory Callbacks</h3>
+        <p>Periodically resurfaces forgotten tasks, old decisions, or facts that connect to current work.</p>
+        <div class="bubble bot" style="margin-top:16px; font-size:0.85rem;">
+          <span class="name">Favor</span>
+          Hey, 3 weeks ago you said you wanted to look into a new hosting provider. Still on your radar?
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 11: Guardian -->
+  <div class="slide">
+    <h2 class="animate"><span class="highlight">Guardian</span> Security</h2>
+    <div class="two-col animate">
+      <div>
+        <h3 style="color:var(--red);">Runtime Protection</h3>
+        <ul>
+          <li><strong style="color:var(--text)">Rate limiting</strong> &mdash; 100 req/hr, 500/day</li>
+          <li><strong style="color:var(--text)">Spend cap</strong> &mdash; $5/day (configurable)</li>
+          <li><strong style="color:var(--text)">Per-contact throttle</strong> &mdash; 30 req/hr per person</li>
+          <li><strong style="color:var(--text)">API key leak detection</strong> &mdash; auto-redacts keys in outgoing messages</li>
+          <li><strong style="color:var(--text)">Anomaly detection</strong> &mdash; flags unusual spikes</li>
+          <li><strong style="color:var(--text)">Prompt injection defense</strong> &mdash; sanitizes untrusted input</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--purple);">Code Scanner</h3>
+        <ul>
+          <li>Feature discovery &amp; code quality checks</li>
+          <li>Security validation &amp; API route testing</li>
+          <li>Database integrity checks</li>
+          <li>Regression tracking (compares against previous scans)</li>
+          <li>Build verification</li>
+        </ul>
+        <pre style="font-size:0.85rem; margin-top:12px;"><span class="string">"Run guardian on /root/my-project"</span>
+<span class="string">"Guardian status"</span>
+<span class="string">"Any regressions?"</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 12: Customize -->
+  <div class="slide">
+    <h2 class="animate">Make it <span class="highlight">yours</span></h2>
+    <div class="two-col animate">
+      <div>
+        <h3>Config</h3>
+        <p style="margin-bottom:12px;">Edit <code>config.json</code> to change everything:</p>
+        <pre style="font-size:0.85rem;">{
+  <span class="string">"identity"</span>: {
+    <span class="string">"name"</span>: <span class="string">"Jarvis"</span>
+  },
+  <span class="string">"model"</span>: {
+    <span class="string">"id"</span>: <span class="string">"gpt-4o"</span>
+  },
+  <span class="string">"alive"</span>: {
+    <span class="string">"enabled"</span>: true,
+    <span class="string">"morningCheckin"</span>: <span class="string">"09:00"</span>
+  },
+  <span class="string">"guard"</span>: {
+    <span class="string">"maxDailySpend"</span>: 10.00
+  }
+}</pre>
+      </div>
+      <div>
+        <h3>Knowledge Files</h3>
+        <p style="margin-bottom:12px;">Drop markdown files in <code>knowledge/</code> to teach it anything:</p>
+        <ul>
+          <li><code>identity.md</code> &mdash; Who your bot is, personality</li>
+          <li><code>soul.md</code> &mdash; Core values and boundaries</li>
+          <li><code>goals.md</code> &mdash; What it's working toward</li>
+          <li><code>relationships.md</code> &mdash; People it should know</li>
+          <li><code>user.md</code> &mdash; Info about you</li>
+          <li><code>playbook.md</code> &mdash; Situation-specific responses</li>
+        </ul>
+        <p style="margin-top:12px;">These files <strong style="color:var(--text);">are</strong> your bot's personality. Change them and it changes who it is.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 13: Commands -->
+  <div class="slide">
+    <h2 class="animate">WhatsApp <span class="highlight">Commands</span></h2>
+    <div class="content animate">
+      <table>
+        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>/status</code></td><td>Bot status, memory count, model, uptime</td></tr>
+          <tr><td><code>/memory</code></td><td>See what your bot remembers</td></tr>
+          <tr><td><code>/model gpt-4o</code></td><td>Switch AI model on the fly</td></tr>
+          <tr><td><code>/crons</code></td><td>View all scheduled tasks</td></tr>
+          <tr><td><code>/clear</code></td><td>Clear conversation (memory persists)</td></tr>
+          <tr><td><code>/reload</code></td><td>Hot-reload config without restart</td></tr>
+          <tr><td><code>/topics</code></td><td>Manage conversation branches</td></tr>
+          <tr><td><code>/help</code></td><td>Show all commands</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SLIDE 14: Helper Scripts -->
+  <div class="slide">
+    <h2 class="animate">Helper <span class="highlight">Scripts</span></h2>
+    <div class="content animate">
+      <pre><span class="comment"># Check if your bot is running + server health</span>
+<span class="cmd">./status.sh</span>
+
+<span class="comment"># Pull latest updates from GitHub and restart</span>
+<span class="cmd">./update.sh</span>
+
+<span class="comment"># Re-link WhatsApp if it disconnects</span>
+<span class="cmd">./relink.sh</span>
+
+<span class="comment"># Manual deploy (restart with pm2)</span>
+<span class="cmd">./deploy.sh</span>
+
+<span class="comment"># Check pm2 processes</span>
+<span class="cmd">pm2 status</span>
+
+<span class="comment"># View live logs</span>
+<span class="cmd">pm2 logs favor --lines 50</span></pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 15: Architecture -->
+  <div class="slide">
+    <h2 class="animate">Architecture</h2>
+    <div class="content animate">
+      <pre style="font-size:0.85rem; line-height:2;">
+<span class="cmd">favor.js</span>       <span class="comment">Main bot: WhatsApp + message handling + tool loop</span>
+<span class="cmd">router.js</span>      <span class="comment">AI router: classifies messages, picks best model</span>
+<span class="cmd">db.js</span>          <span class="comment">SQLite: memory, sessions, topics, crons, teach cmds</span>
+<span class="cmd">compactor.js</span>   <span class="comment">Summarizes old messages to save context</span>
+<span class="cmd">cron.js</span>        <span class="comment">Scheduled task engine</span>
+<span class="cmd">vault.js</span>       <span class="comment">AES-256 encrypted storage</span>
+<span class="cmd">browser.js</span>     <span class="comment">Headless browser automation (Puppeteer)</span>
+<span class="cmd">video.js</span>       <span class="comment">Video download, transcription, analysis</span>
+<span class="cmd">build-mode.js</span>  <span class="comment">Claude Code CLI integration</span>
+<span class="cmd">guardian.js</span>    <span class="comment">Security: code scanning + runtime guard</span>
+<span class="cmd">selfcheck.js</span>   <span class="comment">Health monitoring and auto-cleanup</span>
+<span class="cmd">alive/</span>         <span class="comment">Proactive personality engine</span>
+<span class="cmd">knowledge/</span>     <span class="comment">Your bot's personality + expertise</span>
+<span class="cmd">config.json</span>    <span class="comment">All settings (not in git)</span></pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 16: Getting API Keys (Detailed) -->
+  <div class="slide">
+    <h2 class="animate">Getting your <span class="highlight">API Keys</span></h2>
+    <div class="content animate">
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="color:var(--red);">OpenAI (Required)</h3>
+        <ul>
+          <li>Go to <strong style="color:var(--text)">platform.openai.com</strong> &rarr; Sign up or log in</li>
+          <li>Click your profile (top-right) &rarr; <strong style="color:var(--text)">API Keys</strong></li>
+          <li>Click <strong style="color:var(--text)">Create new secret key</strong> &rarr; copy it (starts with <code>sk-</code>)</li>
+          <li>Go to <strong style="color:var(--text)">Billing</strong> &rarr; add a payment method &rarr; set a usage limit ($10-20/mo is plenty)</li>
+          <li>You must have credits loaded. A new account with $0 balance will get <code>429</code> errors</li>
+        </ul>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="card">
+          <h3 style="color:var(--accent);">Gemini (Free)</h3>
+          <ul>
+            <li>Go to <strong style="color:var(--text)">aistudio.google.com/apikey</strong></li>
+            <li>Sign in with Google &rarr; click <strong style="color:var(--text)">Create API Key</strong></li>
+            <li>Copy the key &mdash; that's it, no billing needed</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 style="color:var(--blue);">Brave Search (Free tier)</h3>
+          <ul>
+            <li>Go to <strong style="color:var(--text)">brave.com/search/api</strong></li>
+            <li>Sign up &rarr; choose the <strong style="color:var(--text)">Free</strong> plan (2,000 queries/mo)</li>
+            <li>Copy your API key from the dashboard</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 17: Detailed Linux Setup -->
+  <div class="slide">
+    <h2 class="animate">Linux Setup <span style="color:var(--orange); font-weight:400; font-size:0.6em;">detailed</span></h2>
+    <div class="content animate">
+      <pre><span class="comment"># 1. Create a DigitalOcean droplet (or any Ubuntu VPS)</span>
+<span class="comment">#    - Ubuntu 22.04, $6/mo plan (1GB RAM), any region</span>
+<span class="comment">#    - Add your SSH key during creation (or use password)</span>
+
+<span class="comment"># 2. SSH in</span>
+<span class="cmd">ssh</span> root@your-droplet-ip
+
+<span class="comment"># 3. Clone the repo</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+
+<span class="comment"># 4. Run setup (installs Node 20, pm2, all dependencies)</span>
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># 5. The script will ask you:</span>
+<span class="comment">#    - Bot name (whatever you want to call it)</span>
+<span class="comment">#    - Your phone number (with country code, e.g. +1234567890)</span>
+<span class="comment">#    - OpenAI API key (required)</span>
+<span class="comment">#    - Gemini API key (optional, just press Enter to skip)</span>
+<span class="comment">#    - Brave Search key (optional)</span>
+
+<span class="comment"># 6. QR code appears — scan it with WhatsApp</span>
+<span class="comment">#    WhatsApp > Settings > Linked Devices > Link a Device</span>
+
+<span class="comment"># 7. Bot starts via pm2 — runs 24/7, auto-restarts on crash</span>
+<span class="cmd">pm2 status</span>              <span class="comment"># verify it's running</span>
+<span class="cmd">pm2 logs favor</span>          <span class="comment"># watch live output</span></pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 18: Detailed macOS Setup -->
+  <div class="slide">
+    <h2 class="animate">macOS Setup <span style="color:var(--blue); font-weight:400; font-size:0.6em;">detailed</span></h2>
+    <div class="content animate">
+      <pre><span class="comment"># 1. Install Homebrew (if you don't have it)</span>
+<span class="cmd">/bin/bash</span> -c <span class="string">"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</span>
+
+<span class="comment"># 2. Install Node.js and git</span>
+<span class="cmd">brew install</span> node git
+
+<span class="comment"># 3. Install pm2 globally (keeps bot running in background)</span>
+<span class="cmd">npm install</span> -g pm2
+
+<span class="comment"># 4. Clone and setup</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># 5. Scan the QR code when it appears</span>
+
+<span class="comment"># IMPORTANT: Mac-specific notes</span>
+<span class="comment">#   - Bot runs as long as your Mac is awake</span>
+<span class="comment">#   - If your Mac sleeps, the bot goes offline</span>
+<span class="comment">#   - For 24/7 uptime: deploy to a $6/mo VPS instead</span>
+<span class="comment">#   - To prevent sleep: System Settings > Energy > Prevent sleep</span>
+<span class="comment">#   - Puppeteer (browser automation) may need:</span>
+<span class="cmd">brew install</span> chromium
+<span class="comment">#   - If you see "chromium can't be opened", run:</span>
+<span class="cmd">xattr -cr</span> /opt/homebrew/bin/chromium</pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 19: Detailed Windows Setup -->
+  <div class="slide">
+    <h2 class="animate">Windows Setup <span style="color:var(--purple); font-weight:400; font-size:0.6em;">detailed</span></h2>
+    <div class="content animate">
+      <pre><span class="comment"># 1. Install WSL2 (Windows Subsystem for Linux)</span>
+<span class="comment">#    Open PowerShell as Administrator:</span>
+<span class="cmd">wsl --install</span>
+<span class="comment">#    Restart your PC when prompted</span>
+
+<span class="comment"># 2. Open "Ubuntu" from the Start Menu</span>
+<span class="comment">#    First launch: create a username and password</span>
+
+<span class="comment"># 3. Update packages</span>
+<span class="cmd">sudo apt update</span> && <span class="cmd">sudo apt upgrade</span> -y
+
+<span class="comment"># 4. Install Node.js 20</span>
+<span class="cmd">curl</span> -fsSL https://deb.nodesource.com/setup_20.x | <span class="cmd">sudo</span> -E bash -
+<span class="cmd">sudo apt install</span> -y nodejs
+
+<span class="comment"># 5. Install pm2</span>
+<span class="cmd">sudo npm install</span> -g pm2
+
+<span class="comment"># 6. Clone and setup</span>
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor
+<span class="cmd">bash</span> setup.sh
+
+<span class="comment"># IMPORTANT: Windows-specific notes</span>
+<span class="comment">#   - Bot stops when you close the Ubuntu/WSL window</span>
+<span class="comment">#   - To keep it running: leave the window open, or use:</span>
+<span class="cmd">wsl --shutdown</span>  <span class="comment"># DON'T do this (kills the bot)</span>
+<span class="comment">#   - For 24/7: deploy to a VPS ($6/mo DigitalOcean)</span>
+<span class="comment">#   - If you get "permission denied" on setup.sh:</span>
+<span class="cmd">chmod +x</span> setup.sh && <span class="cmd">bash</span> setup.sh</pre>
+    </div>
+  </div>
+
+  <!-- SLIDE 20: Post-Install Checklist -->
+  <div class="slide">
+    <h2 class="animate">Post-Install <span class="highlight">Checklist</span></h2>
+    <div class="two-col animate">
+      <div>
+        <h3>Verify it's working</h3>
+        <pre style="font-size:0.85rem;"><span class="comment"># Is the bot running?</span>
+<span class="cmd">pm2 status</span>
+<span class="comment"># Should show "favor" with status "online"</span>
+
+<span class="comment"># Check for errors</span>
+<span class="cmd">pm2 logs favor</span> --lines 20
+
+<span class="comment"># Look for this line:</span>
+<span class="string">[FAVOR] Bot is online</span>
+<span class="string">[KNOWLEDGE] Embedded X knowledge files</span>
+
+<span class="comment"># Send "hello" on WhatsApp</span>
+<span class="comment"># Your bot should reply within 5-10 seconds</span></pre>
+      </div>
+      <div>
+        <h3>First things to try</h3>
+        <ul>
+          <li>Send <strong style="color:var(--text)">"hello"</strong> &mdash; should get a response</li>
+          <li>Send <strong style="color:var(--text)">"/status"</strong> &mdash; shows bot info</li>
+          <li>Send <strong style="color:var(--text)">"remember that my name is [name]"</strong> &mdash; tests memory</li>
+          <li>Send <strong style="color:var(--text)">"what's my name?"</strong> &mdash; should recall it</li>
+          <li>Send <strong style="color:var(--text)">"search the web for latest AI news"</strong> &mdash; tests web search</li>
+          <li>Send <strong style="color:var(--text)">"/help"</strong> &mdash; see all commands</li>
+        </ul>
+        <div style="margin-top:16px; padding:16px; background:var(--accent-glow); border-radius:12px; border:1px solid rgba(37,211,102,0.3);">
+          <p style="color:var(--accent); font-weight:500; font-size:0.9rem;">If everything works, customize your bot's personality by editing the files in <code>knowledge/</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 21: Troubleshooting -->
+  <div class="slide">
+    <h2 class="animate"><span class="highlight">Troubleshooting</span></h2>
+    <div class="content animate">
+      <table>
+        <thead><tr><th>Problem</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong style="color:var(--text)">Bot not responding</strong></td>
+            <td>Run <code>pm2 status</code>. If stopped: <code>pm2 restart favor</code>. Check logs: <code>pm2 logs favor --lines 30</code></td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">QR code won't scan</strong></td>
+            <td>Make sure WhatsApp is updated. Try <code>./relink.sh</code> to generate a new QR code</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">WhatsApp disconnects often</strong></td>
+            <td>Normal for first 24hrs. Bot auto-reconnects. If persistent: <code>pm2 restart favor</code></td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">"429 Too Many Requests"</strong></td>
+            <td>OpenAI rate limit. Add billing to your OpenAI account and load credits ($5-10)</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">Bot replies are slow</strong></td>
+            <td>Normal for first message (cold start). Subsequent replies are faster. GPT-4o is slower than mini</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">"Cannot find module"</strong></td>
+            <td>Run <code>npm install</code> in the favor directory. Then <code>pm2 restart favor</code></td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">Config changes not working</strong></td>
+            <td>Config hot-reloads every 2 seconds. Or send <code>/reload</code> on WhatsApp. Or <code>pm2 restart favor</code></td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">Chromium/Puppeteer errors</strong></td>
+            <td>Run <code>sudo apt install -y chromium-browser</code> (Linux) or <code>brew install chromium</code> (Mac)</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--text)">Out of memory</strong></td>
+            <td>Add swap: <code>sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SLIDE 22: Need Help? Dell is here -->
+  <div class="slide">
+    <h2 class="animate">Need help? <span class="highlight">Ask Dell</span></h2>
+    <div class="two-col animate">
+      <div>
+        <p style="margin-bottom:16px; font-size:1.1rem;">Favor comes with a built-in support system. If you get stuck during setup or have questions about how something works, <strong style="color:var(--text)">message Dell on WhatsApp</strong>.</p>
+        <ul>
+          <li>Dell is the original Favor bot &mdash; built and operated by the creator</li>
+          <li>Can walk you through setup step by step</li>
+          <li>Can help debug config issues</li>
+          <li>Can explain features and how to customize</li>
+          <li>Available on WhatsApp &mdash; just message and ask</li>
+        </ul>
+        <div style="margin-top:20px; padding:20px; background:var(--surface); border:1px solid var(--accent); border-radius:12px;">
+          <p style="color:var(--accent); font-weight:600; font-size:1rem; margin-bottom:8px;">WhatsApp Support</p>
+          <p style="color:var(--text); font-size:0.95rem;">Message <strong>Dell</strong> for setup help, troubleshooting, or questions about Favor.</p>
+          <p style="color:var(--text-dim); font-size:0.85rem; margin-top:8px;">Response time: usually within minutes</p>
+        </div>
+      </div>
+      <div class="chat">
+        <div class="bubble user">Hey Dell, I'm setting up Favor but the QR code expired before I could scan it</div>
+        <div class="bubble bot"><span class="name">Dell</span>No worries! Run <code>./relink.sh</code> in your terminal &mdash; it'll generate a fresh QR code. Make sure you have WhatsApp open and ready before you run it, the code expires in about 60 seconds.</div>
+        <div class="bubble user">Got it, that worked! How do I change the bot's name?</div>
+        <div class="bubble bot"><span class="name">Dell</span>Open <code>config.json</code> and change the <code>"name"</code> field under <code>"identity"</code>. Then send <code>/reload</code> on WhatsApp &mdash; no restart needed.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 23: Tips & Best Practices -->
+  <div class="slide">
+    <h2 class="animate">Tips &amp; <span class="highlight">Best Practices</span></h2>
+    <div class="three-col animate">
+      <div class="card">
+        <h3 style="color:var(--orange);">Save Money</h3>
+        <ul>
+          <li>Set a spend cap in Guardian config (<code>maxDailySpend</code>)</li>
+          <li>Use <code>/model gpt-4o-mini</code> for casual chat (10x cheaper)</li>
+          <li>Gemini is free &mdash; use it for large document analysis</li>
+          <li>Teach Mode commands cost $0 to execute</li>
+          <li>Set OpenAI billing alerts at $10 and $20</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--blue);">Stay Secure</h3>
+        <ul>
+          <li>Never share your <code>config.json</code> &mdash; it has your API keys</li>
+          <li>Guardian auto-redacts leaked keys, but don't test it</li>
+          <li>Set the security phrase in config for vault access</li>
+          <li>Keep your server updated: <code>sudo apt update && upgrade</code></li>
+          <li>The bot only responds to your phone number by default</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--pink);">Get the Most Out of It</h3>
+        <ul>
+          <li>Write detailed knowledge files &mdash; the better your <code>identity.md</code>, the better the bot</li>
+          <li>Use memory actively: "remember that..." builds its knowledge</li>
+          <li>Set up the Alive Engine for daily check-ins</li>
+          <li>Teach it shortcuts for things you repeat</li>
+          <li>Try Build Mode &mdash; it can literally code for you</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 24: Get Started (Final) -->
+  <div class="slide">
+    <div class="logo-text animate" style="font-size:clamp(3rem, 7vw, 6rem);">favor</div>
+    <h2 class="animate" style="font-weight:400; margin-top:16px;">Get started in 5 minutes</h2>
+    <pre class="animate" style="text-align:center; max-width:600px;">
+<span class="cmd">git clone</span> https://github.com/dub4subs-jpg/favor.git
+<span class="cmd">cd</span> favor && <span class="cmd">bash</span> setup.sh</pre>
+    <p class="subtitle animate" style="margin-top:24px;">MIT License &mdash; do whatever you want with it.</p>
+    <p class="animate" style="margin-top:12px; color:var(--accent); font-weight:600;">github.com/dub4subs-jpg/favor</p>
+    <p class="animate" style="margin-top:20px; color:var(--text-dim);">Stuck? Message <strong style="color:var(--text);">Dell</strong> on WhatsApp for help.</p>
+  </div>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="prev()" id="prevBtn">&#8592;</button>
+  <span class="counter" id="counter">1 / 24</span>
+  <button onclick="next()" id="nextBtn">&#8594;</button>
+</div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+
+  function goTo(n) {
+    if (n < 0 || n >= total) return;
+    slides[current].classList.remove('active');
+    slides[current].classList.add(n > current ? 'prev' : '');
+    setTimeout(() => slides[current === n ? current : (n > current ? current : current)], 0);
+
+    slides.forEach((s, i) => {
+      s.classList.remove('active', 'prev');
+      if (i === n) s.classList.add('active');
+      else if (i < n) s.classList.add('prev');
+    });
+
+    current = n;
+    counter.textContent = `${current + 1} / ${total}`;
+    progress.style.width = `${((current + 1) / total) * 100}%`;
+  }
+
+  function next() { goTo(current + 1); }
+  function prev() { goTo(current - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+    if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+    if (e.key === 'End') { e.preventDefault(); goTo(total - 1); }
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
+  document.addEventListener('touchend', e => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 50) diff > 0 ? next() : prev();
+  });
+
+  // OS tab switching
+  function switchOS(section, os) {
+    document.querySelectorAll(`#${section}Tabs .os-tab`).forEach(t => t.classList.remove('active'));
+    document.querySelectorAll(`[id^="${section}-"]`).forEach(c => c.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById(`${section}-${os}`).classList.add('active');
+  }
+
+  // Init
+  progress.style.width = `${(1 / total) * 100}%`;
+</script>
+
+</body>
+</html>
