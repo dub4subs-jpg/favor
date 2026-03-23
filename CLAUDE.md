@@ -132,7 +132,7 @@ Conversations are stored in SQLite (`sessions` table) as JSON arrays of messages
 ## Setup requirements
 - Node.js 18+
 - API keys: OpenAI (required), Gemini (optional), Brave Search (optional)
-- Claude Code CLI (optional — needed for Build Mode)
+- Claude Code CLI (highly recommended — powers most conversations + Build Mode; auto-detected on startup)
 - A WhatsApp account to link via QR code
 
 ## Commit conventions

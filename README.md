@@ -58,10 +58,10 @@ That's it. Your bot is live.
 | OpenAI API key | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Pay-per-use (~$5-20/mo) |
 | Gemini API key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
 | Brave Search key | [brave.com/search/api](https://brave.com/search/api/) | Free tier available |
-| Claude Code subscription | [claude.ai](https://claude.ai) | Optional — needed for Build Mode |
+| Claude Code subscription | [claude.ai](https://claude.ai) | **Highly recommended** — powers conversations, coding, and Build Mode |
 | DigitalOcean server | [digitalocean.com](https://www.digitalocean.com) | $6/mo |
 
-Only OpenAI is required. Everything else is optional but recommended.
+Only OpenAI is required. Everything else is optional but recommended. **Claude Code CLI is strongly recommended** — without it, your bot uses GPT-4o for everything. With it, most conversations route through Claude (via your Max/Pro subscription) for much better, more natural responses at no extra API cost.
 
 ---
 
@@ -104,6 +104,20 @@ Configure in `config.json`:
 - **Laptop remote access** — Control your computer via SSH (open apps, run commands, take screenshots)
 - **Email** — Search, read, and send emails through Gmail
 - **UI/UX design system** — Generate color palettes, typography, and layout recommendations
+
+### Claude Code CLI (Recommended)
+
+Claude Code CLI is the secret weapon that makes Favor feel like a real companion, not just a chatbot. When installed, **most of your conversations route through Claude** instead of GPT-4o — including casual chat, Q&A, engineering tasks, mini responses, and even image analysis. This runs on your Claude subscription (Pro $20/mo or Max $100/mo), so there's **no extra per-message API cost**.
+
+Without Claude CLI, everything falls back to GPT-4o (pay-per-use). With it, you get better conversations for a flat monthly fee.
+
+**Install it:**
+```bash
+curl -fsSL https://claude.ai/install.sh | sh
+claude login
+```
+
+The setup script (`bash setup.sh`) also offers to install it for you. If you skip it during setup, you can always install later — the bot will automatically detect it on next restart.
 
 ### Build Mode
 Tell your bot to build software and it shells out to **Claude Code CLI** to do the actual coding.

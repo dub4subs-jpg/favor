@@ -5,12 +5,55 @@ const { execFile, spawn } = require('child_process');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 
-const CLAUDE_BIN = '/root/.local/bin/claude';
+// ─── CLAUDE CLI AUTO-DETECTION ───
+// Finds Claude Code CLI wherever it's installed (not just /root/.local/bin)
+const { execSync } = require('child_process');
+let CLAUDE_BIN = null;
+let CLAUDE_AVAILABLE = false;
+let _claudeTipSent = false;
+
+function detectClaudeCLI() {
+  // Check common install locations + PATH
+  const candidates = [
+    process.env.CLAUDE_BIN,                    // explicit override via env
+    '/root/.local/bin/claude',                 // default Linux install
+    '/usr/local/bin/claude',                   // system-wide install
+    '/home/' + (process.env.USER || 'root') + '/.local/bin/claude',
+  ].filter(Boolean);
+
+  for (const bin of candidates) {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(bin)) {
+        CLAUDE_BIN = bin;
+        CLAUDE_AVAILABLE = true;
+        console.log(`[ROUTER] Claude Code CLI found: ${bin}`);
+        return;
+      }
+    } catch {}
+  }
+
+  // Last resort: check PATH
+  try {
+    const which = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (which) {
+      CLAUDE_BIN = which;
+      CLAUDE_AVAILABLE = true;
+      console.log(`[ROUTER] Claude Code CLI found in PATH: ${which}`);
+      return;
+    }
+  } catch {}
+
+  console.warn('[ROUTER] Claude Code CLI not found — claude/chat/mini routes will fall back to GPT-4o.');
+  console.warn('[ROUTER] Install it for better responses: curl -fsSL https://claude.ai/install.sh | sh');
+}
+detectClaudeCLI();
 
 // Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
 function claudeEnv() {
+  const binDir = CLAUDE_BIN ? require('path').dirname(CLAUDE_BIN) : '/root/.local/bin';
   return Object.fromEntries(
-    Object.entries({ ...process.env, PATH: `/root/.local/bin:${process.env.PATH}` })
+    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
       .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
   );
 }
@@ -239,8 +282,18 @@ Respond ONLY with valid JSON:
   }
 }
 
+// Returns a one-time tip about installing Claude CLI (empty string after first call)
+function getClaudeTip() {
+  if (CLAUDE_AVAILABLE || _claudeTipSent) return '';
+  _claudeTipSent = true;
+  return '\n\n💡 *Tip:* Install Claude Code CLI for much better conversations. Run `curl -fsSL https://claude.ai/install.sh | sh` on your server, then `claude login`. Requires a Claude Pro ($20/mo) or Max ($100/mo) subscription.';
+}
+
 // ─── CLAUDE CLI EXECUTOR ───
 function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools } = {}) {
+  if (!CLAUDE_AVAILABLE) {
+    return Promise.reject(new Error('Claude Code CLI not installed'));
+  }
   // Use spawn + stdin for long prompts (avoids arg length limits)
   // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
   const args = (imagePath || allowTools)
@@ -347,4 +400,4 @@ async function runGeminiAnalyst(prompt) {
   return result.response.text() || '(no output)';
 }
 
-module.exports = { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry };
+module.exports = { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable: () => CLAUDE_AVAILABLE, getClaudeTip };

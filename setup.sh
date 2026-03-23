@@ -682,8 +682,12 @@ echo ""
 if [ "$HAS_CLAUDE" = true ]; then
     echo "  [✓] Claude Code already installed — skipping"
 else
-    echo "  Claude Code gives your bot engineering/coding abilities."
-    echo "  Requires a Claude account ($20/mo Pro or $100/mo Max)."
+    echo "  ⭐ HIGHLY RECOMMENDED: Claude Code makes your bot way smarter."
+    echo "  Without it, all messages use GPT-4o (pay-per-use API costs)."
+    echo "  With it, most conversations route through Claude for better"
+    echo "  responses at a flat monthly fee (no extra per-message cost)."
+    echo ""
+    echo "  Requires a Claude account (\$20/mo Pro or \$100/mo Max)."
     echo ""
     read -p "  Install Claude Code? (y/N): " INSTALL_CLAUDE
     if [ "$INSTALL_CLAUDE" = "y" ] || [ "$INSTALL_CLAUDE" = "Y" ]; then
@@ -698,7 +702,8 @@ else
         echo "  [✓] Claude Code installed and logged in"
         HAS_CLAUDE=true
     else
-        echo "  [i] Skipped — bot works fine without it (coding tasks use GPT-4o instead)"
+        echo "  [i] Skipped — bot will use GPT-4o for all messages (higher API costs, less natural)"
+        echo "  [i] You can install later: curl -fsSL https://claude.ai/install.sh | sh && claude login"
     fi
 fi
 

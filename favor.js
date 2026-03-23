@@ -11,7 +11,7 @@ const { exec, execFile } = require('child_process');
 const FavorMemory = require('./db');
 const CronEngine = require('./cron');
 const Compactor = require('./compactor');
-const { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry } = require('./router');
+const { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable, getClaudeTip } = require('./router');
 const Vault = require('./vault');
 const Browser = require('./browser');
 const VideoProcessor = require('./video');
@@ -3229,6 +3229,11 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
 
     // Image was already sent by laptop_screenshot tool — skip text reply
     if (reply === '__IMAGE_SENT__') return;
+
+    // ─── CLAUDE CLI TIP: One-time suggestion if CLI not installed ───
+    if (!isClaudeAvailable() && modelUsed && !modelUsed.startsWith('claude-cli')) {
+      reply += getClaudeTip();
+    }
 
     // ─── GUARDIAN: Redact any leaked API keys before sending ───
     reply = guardian.redactKeys(reply);
