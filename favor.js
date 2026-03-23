@@ -2951,6 +2951,20 @@ async function handleMessage(msg) {
       console.warn('[MEMORY] Auto-recall failed (non-fatal):', e.message);
     }
 
+    // ─── START REMOTE: direct handler (bypass routing) ───
+    if (/\b(start remote|remote session|code from phone|start coding|launch claude code)\b/i.test(body) && isOperator(jid)) {
+      try {
+        await sock.sendMessage(jid, { text: '🖥️ Starting remote code session...' });
+        const result = await executeTool('start_remote', { directory: '/root' }, { contact: jid });
+        if (result && result !== '__IMAGE_SENT__') {
+          await sock.sendMessage(jid, { text: result });
+        }
+      } catch (e) {
+        await sock.sendMessage(jid, { text: 'Failed to start remote session: ' + e.message });
+      }
+      return;
+    }
+
     // ─── TEACH MODE: check for trigger match before routing ───
     const teachMatch = db.matchTeachCommand(jid, body);
     if (teachMatch) {
