@@ -18,8 +18,7 @@ const Callbacks = require('./callbacks');
 class AliveEngine {
   constructor(db, openai, opts = {}) {
     this.db = db;
-    this.openai = openai;
-    this.modelId = opts.modelId || 'gpt-4o';
+    // openai param kept for backward compat but no longer used (Claude CLI instead)
     this.maxTokens = opts.maxTokens || 300;
     this.operatorContact = opts.operatorContact || '';
     this.botName = opts.botName || 'Favor';

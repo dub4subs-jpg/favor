@@ -1,6 +1,60 @@
 // ─── ALIVE: CHECK-INS ───
 // Morning greetings and evening wind-downs
 
+const { spawn } = require('child_process');
+const fs = require('fs');
+
+// ─── CLAUDE CLI AUTO-DETECTION ───
+const { execSync } = require('child_process');
+let CLAUDE_BIN = null;
+
+(function detectClaudeCLI() {
+  const candidates = [
+    process.env.CLAUDE_BIN,
+    '/root/.local/bin/claude',
+    '/usr/local/bin/claude',
+    '/home/' + (process.env.USER || 'root') + '/.local/bin/claude',
+  ].filter(Boolean);
+  for (const bin of candidates) {
+    try { if (fs.existsSync(bin)) { CLAUDE_BIN = bin; return; } } catch {}
+  }
+  try {
+    const which = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (which) { CLAUDE_BIN = which; return; }
+  } catch {}
+})();
+
+// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
+function claudeEnv() {
+  const binDir = CLAUDE_BIN ? require('path').dirname(CLAUDE_BIN) : '/root/.local/bin';
+  return Object.fromEntries(
+    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
+      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
+  );
+}
+
+function runClaudeHaiku(prompt, timeoutMs = 30000) {
+  if (!CLAUDE_BIN) return Promise.reject(new Error('Claude Code CLI not installed'));
+  return new Promise((resolve, reject) => {
+    const proc = spawn(CLAUDE_BIN, ['--print', '--model', 'haiku', '--allowedTools', '', '-'], {
+      timeout: timeoutMs,
+      env: claudeEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', d => stdout += d);
+    proc.stderr.on('data', d => stderr += d);
+    proc.on('close', (code) => {
+      const out = stdout.trim() || stderr.trim() || '';
+      if (code !== 0 && !stdout.trim()) reject(new Error(stderr.trim() || `exit code ${code}`));
+      else resolve(out);
+    });
+    proc.on('error', reject);
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
+}
+
 class Checkins {
   constructor(engine) {
     this.engine = engine;
@@ -49,19 +103,23 @@ class Checkins {
     const context = this._gatherContext(style);
     const systemPrompt = this.engine.getSystemPrompt();
 
-    const response = await this.engine.openai.chat.completions.create({
-      model: this.engine.modelId,
-      max_tokens: this.engine.maxTokens,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: `[SYSTEM: Alive check-in — ${style}]\n\n${taskData.prompt}\n\n${context}\n\nIMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning Check-in]" headers. Just talk naturally like you're texting a friend. If there's truly nothing to say, respond with exactly: SKIP`
-        }
-      ]
-    });
+    const prompt = `${systemPrompt}
 
-    const reply = response.choices?.[0]?.message?.content?.trim() || '';
+[SYSTEM: Alive check-in — ${style}]
+
+${taskData.prompt}
+
+${context}
+
+IMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning Check-in]" headers. Just talk naturally like you're texting a friend. If there's truly nothing to say, respond with exactly: SKIP`;
+
+    let reply = '';
+    try {
+      reply = (await runClaudeHaiku(prompt)) || '';
+    } catch (err) {
+      console.error(`[ALIVE] Claude CLI failed for ${style} check-in:`, err.message);
+      return;
+    }
 
     if (!reply || reply === 'SKIP' || reply.includes('SKIP')) {
       console.log(`[ALIVE] ${style} check-in skipped (nothing to say)`);

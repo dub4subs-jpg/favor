@@ -2,7 +2,60 @@
 // Instead of just dropping old messages, summarizes them into context blocks
 // so the bot never truly forgets a conversation
 
-const OpenAI = require('openai');
+const { spawn } = require('child_process');
+
+// ─── CLAUDE CLI AUTO-DETECTION ───
+const { execSync } = require('child_process');
+const fs = require('fs');
+let CLAUDE_BIN = null;
+
+(function detectClaudeCLI() {
+  const candidates = [
+    process.env.CLAUDE_BIN,
+    '/root/.local/bin/claude',
+    '/usr/local/bin/claude',
+    '/home/' + (process.env.USER || 'root') + '/.local/bin/claude',
+  ].filter(Boolean);
+  for (const bin of candidates) {
+    try { if (fs.existsSync(bin)) { CLAUDE_BIN = bin; return; } } catch {}
+  }
+  try {
+    const which = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (which) { CLAUDE_BIN = which; return; }
+  } catch {}
+  console.warn('[COMPACT] Claude Code CLI not found — compaction will fail. Install: curl -fsSL https://claude.ai/install.sh | sh');
+})();
+
+// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
+function claudeEnv() {
+  const binDir = CLAUDE_BIN ? require('path').dirname(CLAUDE_BIN) : '/root/.local/bin';
+  return Object.fromEntries(
+    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
+      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
+  );
+}
+
+function runClaudeHaiku(prompt, timeoutMs = 30000) {
+  if (!CLAUDE_BIN) return Promise.reject(new Error('Claude Code CLI not installed'));
+  return new Promise((resolve, reject) => {
+    const proc = spawn(CLAUDE_BIN, ['--print', '--model', 'haiku', '--allowedTools', '', '-'], {
+      timeout: timeoutMs,
+      env: claudeEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', d => stdout += d);
+    proc.stderr.on('data', d => stderr += d);
+    proc.on('close', (code) => {
+      const out = stdout.trim() || stderr.trim() || '';
+      if (code !== 0 && !stdout.trim()) reject(new Error(stderr.trim() || `exit code ${code}`));
+      else resolve(out);
+    });
+    proc.on('error', reject);
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
+}
 
 class Compactor {
   constructor(db, opts = {}) {
@@ -10,8 +63,6 @@ class Compactor {
     this.threshold = opts.threshold || 30;
     this.keepRecent = opts.keepRecent || 12;
     this.summaryTokens = opts.summaryTokens || 512;
-    this.openai = new OpenAI({ apiKey: opts.apiKey });
-    this.model = opts.compactModel || 'gpt-4o-mini';
   }
 
   // Check if a conversation needs compaction and do it
@@ -20,13 +71,11 @@ class Compactor {
 
     // Find a safe split point that doesn't break tool_use/tool_result pairs
     let splitAt = messages.length - this.keepRecent;
-    // If splitAt lands on a tool_result (user msg after tool_use), move it back to include the pair
     while (splitAt > 0 && splitAt < messages.length) {
       const msg = messages[splitAt];
       if (msg.role === 'user' && Array.isArray(msg.content) && msg.content[0]?.type === 'tool_result') {
-        splitAt--; // include the assistant tool_use message too
+        splitAt--;
       } else if (msg.role === 'assistant' && Array.isArray(msg.content) && msg.content.some(b => b.type === 'tool_use')) {
-        // This assistant msg has tool_use — the next msg should be tool_result, keep them together
         splitAt--;
       } else {
         break;
@@ -86,26 +135,21 @@ class Compactor {
       return '';
     }).filter(Boolean).join('\n');
 
-    const response = await this.openai.chat.completions.create({
-      model: this.model,
-      max_tokens: this.summaryTokens,
-      messages: [
-        {
-          role: 'system',
-          content: `You are summarizing a conversation between an AI companion and its operator. Extract:
+    const prompt = `You are summarizing a conversation between an AI companion and its operator. Extract:
 1. Key topics discussed
 2. Decisions made
 3. Tasks mentioned or assigned
 4. Important facts shared
 5. Emotional tone / relationship context
 
-Be concise but preserve anything the AI would need to continue the conversation naturally. Write in third person past tense.`
-        },
-        { role: 'user', content: `Summarize this conversation:\n\n${transcript.substring(0, 8000)}` }
-      ]
-    });
+Be concise but preserve anything the AI would need to continue the conversation naturally. Write in third person past tense.
 
-    return response.choices?.[0]?.message?.content || '';
+Summarize this conversation:
+
+${transcript.substring(0, 8000)}`;
+
+    const result = await runClaudeHaiku(prompt);
+    return result || '';
   }
 
   async _extractFacts(messages) {
@@ -118,21 +162,13 @@ Be concise but preserve anything the AI would need to continue the conversation 
 
       if (transcript.length < 50) return;
 
-      const response = await this.openai.chat.completions.create({
-        model: this.model,
-        max_tokens: 256,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `Extract ONLY concrete, reusable facts from this conversation. Return JSON: {"facts": ["fact1", "fact2", ...]}. Include: names, dates, prices, decisions, preferences, contact info, project details, deadlines. Skip: greetings, small talk, tool call details, generic statements. Return {"facts": []} if nothing worth saving. MAX 5 items.`
-          },
-          { role: 'user', content: `Extract key facts:\n\n${transcript}` }
-        ]
-      });
+      const factPrompt = `Extract ONLY concrete, reusable facts from this conversation. Return JSON: {"facts": ["fact1", "fact2", ...]}. Include: names, dates, prices, decisions, preferences, contact info, project details, deadlines. Skip: greetings, small talk, tool call details, generic statements. Return {"facts": []} if nothing worth saving. MAX 5 items. Respond ONLY with valid JSON, no other text.
 
-      const raw = response.choices?.[0]?.message?.content?.trim() || '{"facts":[]}';
+Extract key facts:
+
+${transcript}`;
+
+      const raw = (await runClaudeHaiku(factPrompt)) || '{"facts":[]}';
       const facts = JSON.parse(raw).facts || [];
 
       if (Array.isArray(facts)) {

@@ -1,8 +1,10 @@
 /**
  * Video Processing — extract frames + audio from videos for AI analysis
  * Supports: WhatsApp video messages, YouTube URLs, direct video URLs
+ * Uses Claude Code CLI for vision analysis (free via Max/Pro subscription)
+ * Keeps Whisper (OpenAI) for audio transcription only
  */
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -20,7 +22,7 @@ function shell(cmd, timeoutMs = 60000) {
 
 class VideoProcessor {
   constructor(openai) {
-    this.openai = openai;
+    this.openai = openai; // kept for Whisper transcription only
   }
 
   /**
@@ -140,7 +142,7 @@ class VideoProcessor {
   }
 
   /**
-   * Extract and transcribe audio track
+   * Extract and transcribe audio track (uses OpenAI Whisper — can't replace)
    */
   async transcribeAudio(videoPath, dir) {
     const audioPath = path.join(dir, 'audio.mp3');
@@ -178,36 +180,76 @@ class VideoProcessor {
   }
 
   /**
-   * Analyze frames with GPT-4o vision
+   * Run Claude CLI with a prompt (spawn + stdin for long prompts)
+   * Uses Max/Pro subscription (free) — strips ANTHROPIC_API_KEY from env
+   */
+  _runClaude(prompt, { model = 'sonnet', allowedTools = '', timeoutMs = 120000 } = {}) {
+    return new Promise((resolve, reject) => {
+      // Auto-detect Claude CLI binary
+      let claudeBin = process.env.CLAUDE_BIN || null;
+      if (!claudeBin) {
+        for (const candidate of ['/root/.local/bin/claude', '/usr/local/bin/claude']) {
+          try { if (fs.existsSync(candidate)) { claudeBin = candidate; break; } } catch {}
+        }
+      }
+      if (!claudeBin) {
+        try {
+          const { execSync } = require('child_process');
+          claudeBin = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim() || null;
+        } catch {}
+      }
+      if (!claudeBin) return reject(new Error('Claude Code CLI not installed'));
+
+      const args = ['--print', '--model', model];
+      if (allowedTools) args.push('--allowedTools', allowedTools);
+      args.push('-');
+
+      const env = Object.fromEntries(
+        Object.entries({ ...process.env, PATH: `${require('path').dirname(claudeBin)}:${process.env.PATH}` })
+          .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
+      );
+
+      const proc = spawn(claudeBin, args, {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => stdout += d);
+      proc.stderr.on('data', d => stderr += d);
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+      const timer = setTimeout(() => { proc.kill(); reject(new Error('Claude CLI timeout')); }, timeoutMs);
+      proc.on('close', code => {
+        clearTimeout(timer);
+        if (code === 0 && stdout.trim()) resolve(stdout.trim());
+        else reject(new Error(`Claude CLI exit ${code}: ${stderr.slice(0, 200)}`));
+      });
+      proc.on('error', reject);
+    });
+  }
+
+  /**
+   * Analyze frames with Claude CLI vision (Read tool reads image files)
    */
   async analyzeFrames(frames, context = '') {
     if (!frames.length) return 'No frames to analyze.';
 
-    const imageBlocks = frames.map(f => {
-      const buffer = fs.readFileSync(f.path);
-      const base64 = buffer.toString('base64');
-      return {
-        type: 'image_url',
-        image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'low' }
-      };
-    });
-
     const timeLabels = frames.map(f => `Frame at ${f.timestamp}s`).join(', ');
+    const framePaths = frames.map(f => f.path).join('\n');
+
+    const prompt = `Read each of these image files and analyze them as key frames from a video (${timeLabels}).${context ? ' Context: ' + context : ''}
+
+Frame file paths (read each one):
+${framePaths}
+
+Describe what's happening in this video. Note key visual elements, text on screen, actions, people, products, locations, or anything important. Be specific and detailed.`;
 
     try {
-      const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o',
-        max_tokens: 1500,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: `These are ${frames.length} key frames from a video (${timeLabels}).${context ? ' Context: ' + context : ''}\n\nDescribe what's happening in this video. Note key visual elements, text on screen, actions, people, products, locations, or anything important. Be specific and detailed.` },
-            ...imageBlocks
-          ]
-        }]
-      });
-      return response.choices[0].message.content;
+      const result = await this._runClaude(prompt, { model: 'sonnet', allowedTools: 'Read', timeoutMs: 120000 });
+      return result;
     } catch (e) {
+      console.warn('[VIDEO] Claude CLI vision analysis failed:', e.message);
       return 'Vision analysis failed: ' + e.message;
     }
   }
@@ -237,16 +279,10 @@ class VideoProcessor {
     let summary = '';
     if (transcript && visualAnalysis) {
       try {
-        const response = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          max_tokens: 1000,
-          messages: [{
-            role: 'user',
-            content: `Combine these two analyses of the same video into a coherent summary:\n\n**Visual analysis:**\n${visualAnalysis}\n\n**Audio transcript:**\n${transcript}\n\nProvide a clear, organized summary of the video content. Include key points, any instructions or information shared, and notable details.`
-          }]
-        });
-        summary = response.choices[0].message.content;
+        const prompt = `Combine these two analyses of the same video into a coherent summary:\n\n**Visual analysis:**\n${visualAnalysis}\n\n**Audio transcript:**\n${transcript}\n\nProvide a clear, organized summary of the video content. Include key points, any instructions or information shared, and notable details.`;
+        summary = await this._runClaude(prompt, { model: 'haiku', timeoutMs: 60000 });
       } catch (e) {
+        console.warn('[VIDEO] Claude CLI summarization failed:', e.message);
         summary = `**Visual:** ${visualAnalysis}\n\n**Audio:** ${transcript}`;
       }
     } else {

@@ -62,7 +62,7 @@ function claudeEnv() {
 // tool    → direct tool execution, minimal/no model reasoning needed
 // memory  → fetch memory first, then respond
 // chat    → casual conversation → Claude CLI (free via Max subscription)
-// mini    → use gpt-4o-mini (cheap: summarize, extract, format, simple Q&A)
+// mini    → lightweight tasks (summarize, extract, format, simple Q&A) → Claude CLI with haiku
 // claude  → engineering/code task → Claude CLI subprocess
 // gemini  → large document analysis, research aggregation, long-context tasks
 // kimi    → structured artifact production (slides, reports, spreadsheets, formatted docs, batch work)
@@ -238,7 +238,7 @@ function keywordOverride(message) {
 }
 
 // ─── CLASSIFIER ───
-// Uses gpt-4o-mini for fast, cheap classification
+// Uses Claude CLI for classification (free via Max subscription)
 async function classify(openai, message, recentContext = '') {
   // Check keyword overrides first — no API call needed
   const override = keywordOverride(message);
@@ -246,15 +246,7 @@ async function classify(openai, message, recentContext = '') {
 
   const start = Date.now();
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 120,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `You are a request router for an AI assistant. Classify the user message into ONE route.
+    const classifyPrompt = `You are a request router for an AI assistant. Classify the user message into ONE route.
 
 ${ROUTE_DESCRIPTIONS}
 
@@ -264,16 +256,12 @@ Escalation scoring (0-10):
 7-10: High stakes, must use full
 
 Respond ONLY with valid JSON:
-{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}`
-        },
-        {
-          role: 'user',
-          content: `Context (last 300 chars): ${recentContext.slice(-300)}\n\nMessage: ${message}`
-        }
-      ]
-    });
+{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}
 
-    const raw = response.choices?.[0]?.message?.content?.trim() || '';
+Context (last 300 chars): ${recentContext.slice(-300)}
+
+Message: ${message}`;
+    const raw = await runClaudeCLI(classifyPrompt, 20000) || '';
     let decision;
     try {
       decision = JSON.parse(raw);
@@ -404,15 +392,22 @@ async function runKimi(prompt, config, costTracker = null) {
 
 // ─── GEMINI ANALYST EXECUTOR ───
 async function runGeminiAnalyst(prompt, costTracker = null) {
-  const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = gemini.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    generationConfig: { maxOutputTokens: 8192, temperature: 0.2 },
-  });
-
-  const result = await model.generateContent(prompt);
-  if (costTracker) costTracker.logGemini(result, 'gemini-2.5-flash', 'analyst');
-  return result.response.text() || '(no output)';
+  // Use Claude CLI instead of Gemini — free via Max subscription, better analysis
+  try {
+    const result = await runClaudeCLI(prompt, 120000);
+    return result || '(no output)';
+  } catch (e) {
+    // Fall back to Gemini if Claude CLI fails
+    console.warn('[ROUTER] Claude CLI failed for analyst, falling back to Gemini:', e.message);
+    const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = gemini.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.2 },
+    });
+    const result = await model.generateContent(prompt);
+    if (costTracker) costTracker.logGemini(result, 'gemini-2.5-flash', 'analyst');
+    return result.response.text() || '(no output)';
+  }
 }
 
 module.exports = { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable: () => CLAUDE_AVAILABLE, getClaudeTip };

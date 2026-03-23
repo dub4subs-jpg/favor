@@ -368,15 +368,13 @@ async function semanticSearch(query) {
 async function autoSaveFindings(question, responseText, source) {
   try {
     const snippet = responseText.substring(0, 3000);
-    const extraction = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 300,
-      messages: [
-        { role: 'system', content: 'Extract 1-3 key facts from this research response. Return ONLY a JSON array of concise fact strings (max 200 chars each). Focus on names, conclusions, recommendations, and specific details worth remembering. If nothing worth saving, return [].' },
-        { role: 'user', content: `Question: ${question.substring(0, 200)}\n\nResponse:\n${snippet}` }
-      ]
-    });
-    const raw = extraction.choices?.[0]?.message?.content?.trim() || '[]';
+    const prompt = `Extract 1-3 key facts from this research response. Return ONLY a JSON array of concise fact strings (max 200 chars each). Focus on names, conclusions, recommendations, and specific details worth remembering. If nothing worth saving, return [].
+
+Question: ${question.substring(0, 200)}
+
+Response:
+${snippet}`;
+    const raw = await runClaudeCLI(prompt, 30000) || '[]';
     const facts = JSON.parse(raw.replace(/```json?\n?/g, '').replace(/```/g, ''));
     if (!Array.isArray(facts) || !facts.length) return;
     for (const fact of facts.slice(0, 3)) {
@@ -437,24 +435,15 @@ async function detectAndTrackThreads(contact, userMessage, assistantReply) {
     const combined = `User: ${userMessage}\nAssistant: ${assistantReply}`;
     if (combined.length < 30) return;
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 128,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `You detect unresolved conversation threads — things the user mentioned, asked about, or started discussing that didn't get fully resolved in this exchange.
+    const threadPrompt = `You detect unresolved conversation threads — things the user mentioned, asked about, or started discussing that didn't get fully resolved in this exchange.
 
 Return JSON: {"threads": ["short description", ...]}
-Each thread should be under 15 words. Return {"threads": []} if everything was resolved or it's just casual chat. MAX 2 items.`
-        },
-        { role: 'user', content: `Detect open threads:\n\n${combined.substring(0, 2000)}` }
-      ]
-    });
+Each thread should be under 15 words. Return {"threads": []} if everything was resolved or it's just casual chat. MAX 2 items. Respond ONLY with valid JSON, no other text.
 
-    const raw = response.choices?.[0]?.message?.content?.trim() || '{"threads":[]}';
+Detect open threads:
+
+${combined.substring(0, 2000)}`;
+    const raw = await runClaudeCLI(threadPrompt, 20000) || '{"threads":[]}';
     let threads;
     try { threads = JSON.parse(raw).threads || []; } catch { threads = []; }
 
@@ -1312,15 +1301,14 @@ async function executeTool(name, input, context = {}) {
         getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
 
         // Extract actionable techniques and save as workflow knowledge
-        const techniqueResponse = await openai.chat.completions.create({
-          model: 'gpt-4o',
-          max_tokens: 400,
-          messages: [
-            { role: 'system', content: `Extract actionable techniques, shortcuts, and design/business principles from this video summary. Format as bullet points. Only include things that could be applied to the operator's work. If there are no actionable techniques, respond with: NO_TECHNIQUES` },
-            { role: 'user', content: `Video: ${input.url}\nContext: ${input.context || 'general'}\n\nSummary:\n${result.summary}` }
-          ]
-        });
-        const techniques = techniqueResponse.choices[0]?.message?.content?.trim() || '';
+        const techPrompt = `Extract actionable techniques, shortcuts, and design/business principles from this video summary. Format as bullet points. Only include things that could be applied to the operator's work. If there are no actionable techniques, respond with: NO_TECHNIQUES
+
+Video: ${input.url}
+Context: ${input.context || 'general'}
+
+Summary:
+${result.summary}`;
+        const techniques = await runClaudeCLI(techPrompt, 30000) || '';
         if (techniques && !techniques.includes('NO_TECHNIQUES')) {
           const wfContent = `[Learned from video] ${input.context || 'course'}: ${techniques}`;
           const wfId = db.save('workflow', wfContent.substring(0, 2000), null);
@@ -1351,11 +1339,7 @@ async function executeTool(name, input, context = {}) {
         await browser.close();
 
         // Analyze and extract learnings
-        const learnResponse = await openai.chat.completions.create({
-          model: 'gpt-4o',
-          max_tokens: 600,
-          messages: [
-            { role: 'system', content: `You are extracting actionable knowledge from a webpage for a business owner who does graphic design, contracting, and entrepreneurship.
+        const learnPrompt = `You are extracting actionable knowledge from a webpage.
 
 Extract:
 1. **Key techniques** — specific methods, shortcuts, or approaches that can be replicated
@@ -1364,12 +1348,14 @@ Extract:
 4. **Tools/resources** — any software, services, or resources mentioned worth knowing
 
 Format as organized bullet points under relevant headers. Only include genuinely useful, actionable information.
-If the page has no useful content (404, paywall, login wall, etc.), respond with: NO_CONTENT` },
-            { role: 'user', content: `URL: ${input.url}\nFocus: ${input.context || 'general'}\n\nPage content:\n${pageContent}` }
-          ]
-        });
+If the page has no useful content (404, paywall, login wall, etc.), respond with: NO_CONTENT
 
-        const learnings = learnResponse.choices[0]?.message?.content?.trim() || '';
+URL: ${input.url}
+Focus: ${input.context || 'general'}
+
+Page content:
+${pageContent}`;
+        const learnings = await runClaudeCLI(learnPrompt, 60000) || '';
         if (!learnings || learnings.includes('NO_CONTENT')) return 'Could not extract useful content from that page.';
 
         // Save to workflow memory
@@ -1809,34 +1795,14 @@ async function saveWorkflowSession() {
   const duration = Math.round((Date.now() - screenStartTime) / 1000);
   const now = new Date().toISOString().split('T')[0];
 
-  // Use GPT-4o to distill observations into a workflow profile update
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: 500,
-    messages: [
-      {
-        role: 'system',
-        content: `You are analyzing a screen monitoring session to learn about the operator's workflow, habits, and design style.
+  // Use Claude CLI to distill observations into a workflow profile update
+  const screenPrompt = `Analyze this screen monitoring session. Distill into 3-8 bullet points about workflow habits, tools used, design patterns, and skill indicators. Only lasting insights, not one-time observations. If nothing meaningful, respond with: NOTHING_LEARNED
 
-Distill the raw observations into a concise profile update. Focus on:
-- Apps and tools used (and how they use them)
-- Design patterns and style choices (colors, layouts, typography preferences)
-- Workflow habits (multitasking patterns, tab management, file organization)
-- Skill level indicators (shortcuts used, efficiency, common mistakes)
-- Business/project context clues
+Screen session: ${duration}s, ${screenTickCount} captures, ${screenWorkflowLog.length} observations.
 
-Output a concise summary (3-8 bullet points). Each bullet should be a lasting insight, not a one-time observation.
-Skip anything too trivial or already obvious. Only include things worth remembering for future reference.
-If the session was too short or idle to learn anything meaningful, respond with exactly: NOTHING_LEARNED`
-      },
-      {
-        role: 'user',
-        content: `Screen session: ${duration}s, ${screenTickCount} captures, ${screenWorkflowLog.length} observations.\n\nRaw observations:\n${observations}`
-      }
-    ]
-  });
-
-  const summary = response.choices[0]?.message?.content?.trim() || '';
+Raw observations:
+${observations}`;
+  const summary = await runClaudeCLI(screenPrompt, 60000) || '';
   if (summary && !summary.includes('NOTHING_LEARNED')) {
     const memContent = `[Workflow observation ${now}] ${summary}`;
     const memId = db.save('workflow', memContent.substring(0, 2000), null);
@@ -1930,7 +1896,7 @@ async function screenCaptureTick() {
   }
 }
 
-// Send all buffered frames to GPT-4o as a filmstrip for temporal analysis + workflow learning
+// Save buffered frames to temp files, analyze with Claude CLI + Read tool
 async function analyzeScreenBatch() {
   const frames = [...screenFrameBuffer];
   screenFrameBuffer = [];
@@ -1939,61 +1905,40 @@ async function analyzeScreenBatch() {
     ? `tg_${config.telegram?.operatorChatId || ''}`
     : (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
-  // Build multi-frame message — GPT-4o sees all frames in sequence
-  const imageBlocks = [];
+  // Save frames to temp files for Claude CLI to read
+  const tmpFramePaths = [];
   for (let i = 0; i < frames.length; i++) {
-    const b64 = frames[i].buffer.toString('base64');
-    imageBlocks.push({ type: 'text', text: `[Frame ${i + 1} — ${frames[i].time}]` });
-    imageBlocks.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } });
+    const tmpPath = `/tmp/screen_frame_${Date.now()}_${i}.png`;
+    fs.writeFileSync(tmpPath, frames[i].buffer);
+    tmpFramePaths.push(tmpPath);
   }
-  imageBlocks.push({ type: 'text', text: 'Analyze these frames. Respond in TWO sections:\n1. FLAG: (actionable insight, or NOTHING if routine)\n2. WORKFLOW: (brief note on what the operator is doing/using — apps, design choices, patterns — or NOTHING if idle/lock screen)' });
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: 500,
-    messages: [
-      {
-        role: 'system',
-        content: `You are Favor, monitoring your operator's screen in real-time. You receive ${SCREEN_FRAMES_PER_BATCH} sequential screenshots taken 2 seconds apart — like a filmstrip.
+  const screenAnalysisPrompt = `Read the screenshot image files listed below, then analyze them. These are ${tmpFramePaths.length} sequential screenshots taken 2 seconds apart.
+
+Image files to read:
+${tmpFramePaths.map((p, i) => `- Frame ${i + 1}: ${p}`).join('\n')}
 
 You have TWO jobs:
 
-**JOB 1 — FLAG (for the operator):**
-Respond with an actionable insight ONLY if flag-worthy:
-- Errors, warnings, crashes
-- A mistake in progress
-- Security issue (password visible, phishing)
-- Workflow optimization tip
-- Something impressive or noteworthy
-- Stuck/confused (same screen, no progress)
-Otherwise: FLAG: NOTHING
+**JOB 1 — FLAG:** Actionable insight ONLY if flag-worthy (errors, mistakes, security issues, optimization tips). Otherwise: FLAG: NOTHING
 
-**JOB 2 — WORKFLOW (silent learning):**
-Note what you observe about the operator's workflow, even if routine:
-- What app/tool is being used and how
-- Design choices (colors, fonts, layouts, spacing, alignment patterns)
-- Navigation patterns (how they switch between tools/tabs/windows)
-- Shortcuts or techniques being used
-- What project or task they seem to be working on
-- Skill indicators (expert moves vs struggling)
-If the screen is idle or a lock screen: WORKFLOW: NOTHING
+**JOB 2 — WORKFLOW:** What the operator is doing/using — apps, design choices, patterns. If idle/lock screen: WORKFLOW: NOTHING
 
-FORMAT (always use this exact format):
+FORMAT:
 FLAG: [insight or NOTHING]
 WORKFLOW: [observation or NOTHING]
 
-Be concise. 1-2 sentences per section max.
+Be concise. 1-2 sentences per section max. Previous context (avoid repeating): "${lastScreenContext}"`;
 
-Previous context (avoid repeating): "${lastScreenContext}"`
-      },
-      {
-        role: 'user',
-        content: imageBlocks
-      }
-    ]
-  });
+  let reply = '';
+  try {
+    reply = await runClaudeCLI(screenAnalysisPrompt, 60000, { allowTools: true }) || '';
+  } catch (e) {
+    console.warn('[SCREEN] Claude CLI analysis failed:', e.message);
+  }
 
-  const reply = response.choices[0]?.message?.content?.trim() || '';
+  // Cleanup temp files
+  for (const p of tmpFramePaths) { try { fs.unlinkSync(p); } catch {} }
 
   // Parse the two sections
   const flagMatch = reply.match(/FLAG:\s*(.+?)(?:\n|$)/i);
@@ -2560,16 +2505,8 @@ const cronEngine = new CronEngine(db, {
     if (taskData.type === 'proactive' && cron.contact) {
       console.log(`[CRON] Proactive outreach: "${cron.label}" -> ${cron.contact}`);
       try {
-        const response = await openai.chat.completions.create({
-          model: config.model.id,
-          max_tokens: config.model.maxTokens,
-          messages: [
-            { role: 'system', content: buildSystemPrompt(cron.contact) },
-            { role: 'user', content: `[SYSTEM: Cron "${cron.label}" fired. ${taskData.prompt}]` }
-          ]
-        });
-
-        const reply = response.choices?.[0]?.message?.content || '';
+        const cronPrompt = `${buildSystemPrompt(cron.contact)}\n\n[SYSTEM: Cron "${cron.label}" fired. ${taskData.prompt}]`;
+        const reply = await runClaudeCLI(cronPrompt, 60000) || '';
         if (reply && !reply.includes('SKIP')) {
           const jid = PLATFORM === 'telegram'
             ? (cron.contact.startsWith('tg_') ? cron.contact : `tg_${cron.contact}`)

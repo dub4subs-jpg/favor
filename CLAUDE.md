@@ -30,18 +30,18 @@ The active bot is **`favor.js`** — NOT `bot.js` (legacy, kept for reference on
 ```
 favor.js        — Main bot: platform connection, message handling, multi-model routing, tool loop
 adapters/telegram.js — Telegram bot adapter (grammy) — sock-compatible interface
-router.js       — Decision router: GPT-4o-mini classifier + keyword overrides + specialist executors
+router.js       — Decision router: Claude CLI classifier + keyword overrides + specialist executors
 db.js           — SQLite database layer (sessions, memory, topics, crons, audit, guard logs)
-compactor.js    — Summarizes old messages to save context window space
+compactor.js    — Summarizes old messages to save context window space (Claude CLI)
 cron.js         — Scheduled task engine (reminders, proactive outreach)
 vault.js        — AES-256-GCM encrypted storage for cards/addresses/IDs
 browser.js      — Puppeteer automation (navigate, click, fill forms, screenshot)
-video.js        — Video download, transcription, analysis (yt-dlp, ffmpeg, Whisper)
+video.js        — Video download, transcription, analysis (yt-dlp, ffmpeg, Whisper + Claude CLI vision)
 build-mode.js   — Claude Code CLI integration for building software projects
 guardian.js     — Unified security framework: code scanning + runtime guard
 guardian/       — Guardian QA engine (validators, discovery, regression, repair, reporter)
 selfcheck.js    — Automated health monitoring, cleanup, and sanitization
-alive.js        — Proactive personality engine (check-ins + memory callbacks)
+alive.js        — Proactive personality engine (check-ins + memory callbacks, Claude CLI)
 sync.js         — State sync between bot and external tools
 uiux.js         — UI/UX design system engine (161 industry rules)
 watchdog.js     — Health monitoring and auto-recovery
@@ -52,14 +52,37 @@ data/favor.db   — SQLite database (NOT in git, auto-created on first run)
 ```
 
 ## Multi-Model Routing
+**Claude Code CLI is the primary brain** — free via Claude Max ($100/mo) or Pro ($20/mo) subscription. Almost all tasks run through Claude CLI, drastically reducing API costs.
+
 The bot coordinates multiple AI systems:
-- **ChatGPT (Brain)** — gpt-4o: reasoning, planning, conversation, tool coordination (default route)
-- **Claude Code (Engineer)** — CLI subprocess: coding, debugging, infrastructure
-- **Gemini (Analyst)** — gemini-2.5-flash: large document analysis, research, high-context tasks
+- **Claude Code CLI (Primary Brain)** — Handles: classification, chat, mini tasks, analysis, compaction, check-ins, callbacks, proactive messages, screen monitoring, video frame analysis, fact extraction, thread detection. **Free via Max/Pro subscription.**
+- **OpenAI GPT-4o (Tool Coordinator)** — Only used for the tool use loop (function calling), error recovery/fallback. Also provides Whisper (transcription), TTS (voice), and embeddings.
+- **Gemini (Analyst Fallback)** — gemini-2.5-flash: falls back here if Claude CLI fails for large document analysis
 - **Kimi (Worker Swarm)** — kimi-k2: structured artifacts (reports, slides, spreadsheets)
 
 Routes: tool, memory, mini, claude, gemini, kimi, agent, full, hybrid
-Router uses GPT-4o-mini for classification, keyword overrides for obvious cases.
+Router uses Claude CLI for classification (free), keyword overrides for obvious cases.
+
+### What still uses OpenAI (paid API)?
+- **Tool loop** — GPT-4o function calling (tools: getToolsForRole). This is the ONLY major paid usage.
+- **Whisper** — Audio transcription (voice notes, video audio)
+- **TTS** — Text-to-speech for voice replies
+- **Embeddings** — Semantic memory search (text-embedding-3-small)
+- **Fallback** — If Claude CLI is unavailable, some routes fall back to GPT-4o
+
+### What uses Claude CLI (free)?
+- Request classification (router)
+- Chat and mini route responses
+- Conversation compaction (summarization + fact extraction)
+- Alive engine (morning/evening check-ins, memory callbacks)
+- Proactive cron messages
+- Screen monitoring analysis (vision via Read tool)
+- Video frame analysis (vision via Read tool)
+- Video summarization
+- Auto-save findings (fact extraction from research)
+- Thread detection (follow-up awareness)
+- Gemini analyst route (with Gemini as fallback)
+- Learn from URL / video technique extraction
 
 ## Build Mode
 Shells out to Claude Code CLI to build software projects via WhatsApp.
@@ -84,7 +107,7 @@ Unified security and QA framework with two modes:
 - `guardian_status` — View current spend, request counts, alerts
 
 ## Alive Engine
-Proactive personality system that makes Favor feel like a living companion instead of a passive text-in/text-out tool.
+Proactive personality system that makes Favor feel like a living companion instead of a passive text-in/text-out tool. **Powered by Claude CLI (free).**
 
 **Features:**
 - **Morning check-in** — Warm daily greeting that references pending tasks, open threads, or recent memories
@@ -104,7 +127,7 @@ Proactive personality system that makes Favor feel like a living companion inste
 
 Set `"enabled": false` to disable. Times are in local format — `timezoneOffsetHours` converts to UTC internally (default -5 = EST). Memory callbacks have a 7-day per-memory cooldown to avoid nagging. The AI can respond `SKIP` if there's nothing worth saying.
 
-**Cost:** ~$0.01-0.03/day (3 lightweight API calls with short prompts).
+**Cost:** Free (uses Claude CLI via Max/Pro subscription).
 
 ## Self-Check
 Automated health + cleanup running every 3 days at 5am EST:
@@ -117,12 +140,20 @@ Automated health + cleanup running every 3 days at 5am EST:
 
 ### Tool use loop (favor.js)
 The bot can call tools (memory, server, web search, crons, topics, vault, browser, build, guardian). The tool loop:
-1. Send messages to the AI API with tools
+1. Send messages to OpenAI API with tools (function calling — requires GPT-4o)
 2. If response has tool_calls, execute tools and append results
 3. Repeat until the AI gives a text response
 
+### Claude CLI pattern
+All non-tool-loop AI calls use Claude Code CLI via `runClaudeCLI()`:
+- Spawn + stdin pattern for long prompts (avoids arg length limits)
+- `ANTHROPIC_API_KEY` stripped from env so it uses Max/Pro subscription (free)
+- `--model haiku` for cheap tasks (classification, fact extraction)
+- `--model sonnet` for quality responses (analysis, vision)
+- `--allowedTools Read` for vision tasks (reads image files)
+
 ### Compaction (compactor.js)
-When conversation exceeds threshold (default 30 messages), older messages are summarized and replaced with a summary block. Split point logic avoids breaking tool pairs.
+When conversation exceeds threshold (default 30 messages), older messages are summarized by Claude CLI and replaced with a summary block. Split point logic avoids breaking tool pairs.
 
 ### Session storage
 Conversations are stored in SQLite (`sessions` table) as JSON arrays of messages. Loaded on each incoming message, saved after each response.
@@ -132,9 +163,10 @@ Conversations are stored in SQLite (`sessions` table) as JSON arrays of messages
 
 ## Setup requirements
 - Node.js 18+
-- API keys: OpenAI (required), Gemini (optional), Brave Search (optional)
-- Claude Code CLI (highly recommended — powers most conversations + Build Mode; auto-detected on startup)
-- A WhatsApp account to link via QR code
+- **Claude Code CLI** (required — primary brain for most tasks; install: `curl -fsSL https://claude.ai/install.sh | sh`)
+- Claude Pro ($20/mo) or Max ($100/mo) subscription for free CLI usage
+- API keys: OpenAI (required for tool loop + Whisper + TTS + embeddings), Gemini (optional fallback), Brave Search (optional)
+- A WhatsApp account to link via QR code, or a Telegram bot token
 
 ## Commit conventions
 - Commit working states before making changes
