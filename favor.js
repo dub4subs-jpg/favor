@@ -3120,13 +3120,37 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 ${recentHistory}
 
 Respond to the latest message. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
-        const cliResult = await runClaudeCLI(cliPrompt, 60000, { allowTools: true });
+        const cliResult = await runClaudeCLI(cliPrompt, 180000, { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
         history.push({ role: 'assistant', content: reply });
       } catch (cliErr) {
-        console.warn('[ROUTER] Claude CLI failed for chat/full, falling back to GPT-4o:', cliErr.message);
-        // Fall through to GPT-4o tool loop below
+        console.warn('[ROUTER] Claude CLI attempt 1 failed for chat/full:', cliErr.message);
+        // Retry with simplified prompt — do NOT fall back to GPT-4o
+        try {
+          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
+          const cliResult = await runClaudeCLI(retryPrompt, 180000);
+          reply = cliResult;
+          modelUsed = 'claude-cli';
+          history.push({ role: 'assistant', content: reply });
+          console.log('[ROUTER] Claude CLI retry 1 succeeded');
+        } catch (retryErr1) {
+          console.warn('[ROUTER] Claude CLI attempt 2 failed:', retryErr1.message);
+          // Final attempt — minimal prompt
+          try {
+            const finalPrompt = `Reply to this message:\n\n${userText}`;
+            const cliResult = await runClaudeCLI(finalPrompt, 180000);
+            reply = cliResult;
+            modelUsed = 'claude-cli';
+            history.push({ role: 'assistant', content: reply });
+            console.log('[ROUTER] Claude CLI retry 2 succeeded');
+          } catch (retryErr2) {
+            console.error('[ROUTER] Claude CLI failed 3 times:', retryErr2.message);
+            reply = 'Sorry, I\'m having trouble thinking right now. Try again in a moment.';
+            modelUsed = 'claude-cli-failed';
+            history.push({ role: 'assistant', content: reply });
+          }
+        }
       }
     }
 
@@ -3258,7 +3282,8 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
     }
 
     // ─── ROUTE: tool / hybrid / full — GPT-4o plans, mini executes tools ───
-    if (!reply && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'full' || decision.route === 'agent' || decision.route === 'chat')) {
+    // NOTE: chat/full are handled by Claude CLI above — only tool/hybrid/agent use GPT-4o
+    if (!reply && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent')) {
       // First call: GPT-4o (full reasoning with all context)
       let response = await openai.chat.completions.create({
         model: config.model.id,

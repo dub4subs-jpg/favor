@@ -74,7 +74,7 @@ const ROUTE_DESCRIPTIONS = `
 tool: Direct action via laptop/system tools (open app, run command, check status, send email, create invoice, list files, fetch URL, vault list, browser status, build software projects via Claude Code)
 memory: User asking about something previously discussed, stored facts, preferences, or past decisions
 chat: Casual conversation, greetings, banter, personal talk, jokes, chitchat, venting, emotional support, life updates, opinions, small talk, "how are you", "what's up", "good morning", daily check-ins. PREFER chat for all non-task conversational messages.
-mini: Simple mechanical request (summarize, reformat, extract info, simple factual Q&A, short reply)
+mini: Simple mechanical request (summarize, reformat, extract info, simple factual Q&A, short reply, weather, time, date, convert units, math, define a word, translate, spell check, what day is it)
 claude: Any technical or engineering task — code, debugging, scripts, APIs, infrastructure, system design, architecture, technical analysis, error messages, logs, builds, deployments, database queries, performance, security review, code explanation, refactoring. PREFER claude for all code tasks.
 gemini: Large-scale document analysis, reading long PDFs, processing datasets, summarizing transcripts, research aggregation, competitor analysis, SEO audits, knowledge extraction — anything needing high-context analysis of large information volumes
 kimi: Generating structured business artifacts — slide decks, reports, spreadsheets, formatted documents, data summaries, batch research, multi-step content production, parallel task execution
@@ -101,9 +101,8 @@ const TOOL_KEYWORDS = [
   'message her', 'message him', 'text her', 'text him',
   'send her a', 'send him a', 'send a message', 'send message',
   'ask her', 'ask him', 'tell her', 'tell him',
-  'ask cortana', 'tell cortana', 'message cortana', 'text cortana',
-  'ask josh', 'tell josh', 'message josh', 'text josh',
-  'ask jerry', 'tell jerry', 'message jerry', 'text jerry',
+  // Add your frequent contacts here for instant routing:
+  // 'ask john', 'tell john', 'message john', 'text john',
   'reach out to', 'hit up', 'let her know', 'let him know',
   'ping her', 'ping him', 'ping cortana', 'follow up with',
   'email jerry', 'email her', 'email him', 'send email', 'send an email',
@@ -144,6 +143,14 @@ const KIMI_KEYWORDS = [
   'spreadsheet', 'make a spreadsheet', 'data summary', 'format this data',
   'create a document', 'write a report', 'batch research',
   'make me a template', 'create a template',
+];
+
+const MINI_KEYWORDS = [
+  'what time is it', 'what\'s the time', 'what day is it', 'what\'s the date',
+  'what\'s today', 'convert', 'how many', 'how much is', 'calculate',
+  'define ', 'what does', 'translate', 'spell ', 'celsius', 'fahrenheit',
+  'inches to', 'miles to', 'km to', 'pounds to', 'kg to', 'feet to',
+  'what\'s the weather', 'weather in', 'temperature in',
 ];
 
 const GEMINI_KEYWORDS = [
@@ -208,6 +215,9 @@ function keywordOverride(message) {
   }
   if (KIMI_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'kimi', escalation_score: 5, needs_review: false, reason: 'keyword override: structured artifact production', classifier_ms: 0 };
+  }
+  if (MINI_KEYWORDS.some(kw => lower.includes(kw))) {
+    return { route: 'mini', escalation_score: 1, needs_review: false, reason: 'keyword override: simple/mechanical task', classifier_ms: 0 };
   }
   if (GEMINI_KEYWORDS.some(kw => lower.includes(kw))) {
     return { route: 'gemini', escalation_score: 5, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
