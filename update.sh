@@ -67,4 +67,17 @@ else
     echo "  [✓] Code updated. Start with: node favor.js"
 fi
 
+# ─── Show what's new ───
+if [ -f CHANGELOG.md ]; then
+    echo ""
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║               What's New in Favor                 ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo ""
+    # Show the latest changelog entry (between first two --- markers)
+    awk '/^## \[/{if(seen) exit; seen=1} seen{print "  " $0}' CHANGELOG.md
+    echo ""
+    echo "  Full changelog: cat CHANGELOG.md"
+fi
+
 echo ""
