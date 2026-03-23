@@ -3521,11 +3521,23 @@ process.stderr?.on('error', (e) => { if (e.code !== 'EPIPE') throw e; });
 // ─── LOCAL NOTIFICATION API ───
 // Allows favor-runner and other local processes to push WhatsApp messages
 const NOTIFY_PORT = 3099;
+const NOTIFY_TOKEN = config.notifyToken || require('crypto').randomBytes(16).toString('hex');
 const OPERATOR_JID = PLATFORM === 'telegram'
   ? `tg_${config.telegram?.operatorChatId || ''}`
   : (config.whatsapp?.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
+// Log token on startup so tool-runner.js can use it
+console.log(`[NOTIFY] API token: ${NOTIFY_TOKEN} (set "notifyToken" in config.json to fix this)`);
+
 const notifyServer = http.createServer((req, res) => {
+  // Auth check for all POST endpoints
+  if (req.method === 'POST') {
+    const token = (req.headers['authorization'] || '').replace('Bearer ', '');
+    if (token !== NOTIFY_TOKEN) {
+      console.warn(`[NOTIFY] Unauthorized request to ${req.url}`);
+      res.writeHead(401); res.end('unauthorized'); return;
+    }
+  }
   if (req.method === 'POST' && req.url === '/notify') {
     let body = '';
     req.on('data', chunk => body += chunk);

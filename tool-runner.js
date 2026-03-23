@@ -79,8 +79,9 @@ async function run() {
     const ADB = phoneConfig.adbBinary || process.env.FAVOR_ADB_BINARY || '/usr/local/bin/adb';
     const PHONE_ENABLED = phoneConfig.enabled && PHONE_HOST;
 
-    // Notify port — matches favor.js NOTIFY_PORT
+    // Notify port + auth token — matches favor.js
     const NOTIFY_PORT = 3099;
+    const NOTIFY_TOKEN = config.notifyToken || '';
 
     switch (toolName) {
 
@@ -89,7 +90,7 @@ async function run() {
       case 'laptop_screenshot': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured. Set laptop.enabled, laptop.user, and laptop.host in config.json.'); break; }
         // Use favor.js's /trigger endpoint (has proper screenshot capture + send)
-        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Content-Type: application/json' -d '{"action":"laptop_screenshot"}'`, { timeout: 30000 });
+        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Authorization: Bearer ${NOTIFY_TOKEN}' -H 'Content-Type: application/json' -d '{"action":"laptop_screenshot"}'`, { timeout: 30000 });
         console.log('Screenshot captured and sent.');
         break;
       }
@@ -155,7 +156,7 @@ async function run() {
       case 'phone_screenshot': {
         if (!PHONE_ENABLED) { console.log('Phone access not configured. Set phone.enabled and phone.host in config.json.'); break; }
         // Use favor.js's /trigger endpoint (sends screenshot via messaging platform)
-        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Content-Type: application/json' -d '{"action":"phone_screenshot"}'`, { timeout: 30000 });
+        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Authorization: Bearer ${NOTIFY_TOKEN}' -H 'Content-Type: application/json' -d '{"action":"phone_screenshot"}'`, { timeout: 30000 });
         console.log('Phone screenshot captured and sent.');
         break;
       }
