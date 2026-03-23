@@ -92,15 +92,40 @@ class FavorMemory {
       CREATE INDEX IF NOT EXISTS idx_taught_contact ON taught_commands(contact, enabled);
       CREATE INDEX IF NOT EXISTS idx_taught_trigger ON taught_commands(trigger_phrase);
     `);
-    // Add embedding column to existing DBs that predate this migration
+    // Add columns to existing DBs that predate these migrations
     try { this.db.exec(`ALTER TABLE memories ADD COLUMN embedding TEXT`); } catch (_) {}
+    try { this.db.exec(`ALTER TABLE memories ADD COLUMN contact TEXT`); } catch (_) {}
+    try { this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_contact ON memories(contact)`); } catch (_) {}
   }
 
   // ─── MEMORY ───
-  save(category, content, status, embedding = null) {
-    const stmt = this.db.prepare('INSERT INTO memories (category, content, status, embedding) VALUES (?, ?, ?, ?)');
-    stmt.run(category, content, status || null, embedding ? JSON.stringify(embedding) : null);
+  save(category, content, status, embedding = null, contact = null) {
+    const stmt = this.db.prepare('INSERT INTO memories (category, content, status, embedding, contact) VALUES (?, ?, ?, ?, ?)');
+    stmt.run(category, content, status || null, embedding ? JSON.stringify(embedding) : null, contact || null);
     return this.db.prepare('SELECT last_insert_rowid() as id').get().id;
+  }
+
+  // ─── PER-CONTACT MEMORY ───
+  saveContactMemory(contact, content) {
+    // Dedup: don't save if similar content exists for this contact
+    const existing = this.db.prepare("SELECT id FROM memories WHERE contact = ? AND content LIKE ? LIMIT 1")
+      .get(contact, `%${content.substring(0, 50)}%`);
+    if (existing) return existing.id;
+    return this.save('contact_fact', content, null, null, contact);
+  }
+
+  getContactMemories(contact, limit = 10) {
+    return this.db.prepare("SELECT * FROM memories WHERE contact = ? ORDER BY created_at DESC LIMIT ?")
+      .all(contact, limit);
+  }
+
+  searchContactMemories(contact, query, limit = 5) {
+    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    if (!terms.length) return this.getContactMemories(contact, limit);
+    const conditions = terms.map(() => "LOWER(content) LIKE ?").join(' OR ');
+    const params = terms.map(t => `%${t}%`);
+    return this.db.prepare(`SELECT * FROM memories WHERE contact = ? AND (${conditions}) ORDER BY created_at DESC LIMIT ?`)
+      .all(contact, ...params, limit);
   }
 
   updateEmbedding(id, embedding) {

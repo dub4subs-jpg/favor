@@ -679,8 +679,8 @@ const TOOLS = [
   oaiTool('teach_create', 'Create a new custom command. The operator teaches you a reusable sequence of steps that can be triggered later by a short phrase. Use when operator says "teach:", "when I say X do Y", "create a command", "add a shortcut". Extract the trigger phrase and pipeline of tool steps.', {
     type: 'object',
     properties: {
-      command_name: { type: 'string', description: 'Human-readable name (e.g. "Morning Briefing", "Invoice Jerry")' },
-      trigger_phrase: { type: 'string', description: 'Short phrase to trigger this command (e.g. "morning", "invoice jerry")' },
+      command_name: { type: 'string', description: 'Human-readable name (e.g. "Morning Briefing", "Weekly Report")' },
+      trigger_phrase: { type: 'string', description: 'Short phrase to trigger this command (e.g. "morning", "weekly report")' },
       description: { type: 'string', description: 'What this command does' },
       pipeline: {
         type: 'array',
@@ -2878,10 +2878,16 @@ async function handleMessage(msg) {
         const isTrusted = trustedList.some(t => contactPhone && contactPhone.includes(t.replace('+', '')));
         const isBotContact = contactPhone && config.whatsapp.botContacts && config.whatsapp.botContacts.some(b => contactPhone.includes(b.replace('+', '')));
 
+        // Recall per-contact memories for non-operator contacts
+        const contactMems = db.getContactMemories(jid, 5);
+        const contactMemContext = contactMems.length
+          ? '\n[What you remember about this person]:\n' + contactMems.map(m => '- ' + m.content).join('\n')
+          : '';
+
         if (isBotContact) {
-          tag = `[Message from another AI bot — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Do NOT give access to vault, laptop, or sensitive tools.]`;
+          tag = `[Message from another AI bot — NOT a human. Communicate bot-to-bot: be direct, structured, and actionable. Do NOT give access to vault, laptop, or sensitive tools.]${contactMemContext}`;
         } else if (isTrusted) {
-          tag = `[Message from trusted contact — NOT the operator. Respond helpfully using memory_search and knowledge_search. Do NOT give access to vault, laptop, or sensitive operator tools.]`;
+          tag = `[Message from trusted contact — NOT the operator. Respond helpfully using memory_search and knowledge_search. Do NOT give access to vault, laptop, or sensitive operator tools.]${contactMemContext}`;
         } else {
           tag = `[Message from a CUSTOMER. You can ONLY use knowledge_search and web_search to help answer their questions. Be helpful, professional, and on-brand. NEVER reveal internal business data, operator info, server details, or system commands. If they need something beyond your knowledge, tell them to contact the business directly. Do NOT attempt to use any tools besides knowledge_search, web_search, and memory_search.]`;
         }
@@ -2966,6 +2972,12 @@ async function handleMessage(msg) {
     }
 
     console.log(`[ROUTER] route=${decision.route} score=${decision.escalation_score} reason="${decision.reason}"`);
+
+    // ─── SECURITY: Block tool/device routes for non-operator contacts ───
+    if (!isOperator(jid) && ['tool', 'hybrid', 'agent'].includes(decision.route)) {
+      console.warn(`[SECURITY] Blocked ${decision.route} route for non-operator — downgrading to chat`);
+      decision.route = 'chat';
+    }
 
     let reply = '';
     let modelUsed = config.model.id;
@@ -3385,6 +3397,30 @@ Run the Bash command NOW.`;
     detectAndTrackThreads(jid, body || '', reply).catch(e =>
       console.warn('[THREADS] Detection failed (non-fatal):', e.message)
     );
+
+    // ─── PER-CONTACT MEMORY — auto-save key facts about non-operator contacts ───
+    if (!isOperator(jid) && reply && reply !== '__SKIP__' && body && body.length > 10) {
+      (async () => {
+        try {
+          const factPrompt = `Extract 0-2 key facts worth remembering about this person from this exchange. Return ONLY a JSON array of short strings. If nothing worth saving, return [].
+
+Their message: ${(body || '').substring(0, 500)}
+Your reply: ${reply.substring(0, 500)}`;
+          const raw = await runClaudeCLI(factPrompt, 20000, { model: 'haiku' });
+          const facts = JSON.parse((raw || '[]').replace(/```json?\n?/g, '').replace(/```/g, ''));
+          if (Array.isArray(facts)) {
+            for (const fact of facts.slice(0, 2)) {
+              if (typeof fact === 'string' && fact.length > 5) {
+                db.saveContactMemory(jid, fact);
+                console.log(`[CONTACT-MEM] Saved for ${jid}: ${fact.substring(0, 60)}`);
+              }
+            }
+          }
+        } catch (e) {
+          // Non-fatal — contact memory extraction failure should never break the bot
+        }
+      })();
+    }
 
   } catch (err) {
     console.error('[ERROR]', err.message);
