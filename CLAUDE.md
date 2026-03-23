@@ -45,6 +45,7 @@ alive.js        — Proactive personality engine (check-ins + memory callbacks)
 sync.js         — State sync between bot and external tools
 uiux.js         — UI/UX design system engine (161 industry rules)
 watchdog.js     — Health monitoring and auto-recovery
+costs.js        — API cost tracker (OpenAI, Gemini, Kimi — auto-logs token usage and estimated spend)
 config.json     — Runtime config (NOT in git — has API keys). See config.example.json
 knowledge/      — Text/markdown files loaded into system prompt as knowledge base
 data/favor.db   — SQLite database (NOT in git, auto-created on first run)

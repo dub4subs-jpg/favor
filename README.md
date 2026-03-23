@@ -102,7 +102,9 @@ Configure in `config.json`:
 - **Video analysis** — Send YouTube/TikTok links for summaries, transcripts, and learning
 - **Encrypted vault** — Securely store sensitive info (cards, addresses, passwords) with AES-256
 - **Laptop remote access** — Control your computer via SSH (open apps, run commands, take screenshots)
-- **Email** — Search, read, and send emails through Gmail
+- **Email** — Search, read, and send emails through Gmail (search inbox, read full emails, send with attachments)
+- **Cost tracking** — Automatically tracks API spending across OpenAI, Gemini, and Kimi with daily/weekly/monthly breakdowns
+- **Auto-save findings** — Research results from web searches and Gemini analysis are automatically saved to memory
 - **UI/UX design system** — Generate color palettes, typography, and layout recommendations
 
 ### Claude Code CLI (Recommended)
@@ -256,6 +258,7 @@ vault.js                — AES-256 encrypted storage for sensitive data
 browser.js              — Headless browser automation (Puppeteer)
 video.js                — Video download, transcription, and analysis
 build-mode.js           — Claude Code CLI integration for building software
+costs.js                — API cost tracker (OpenAI, Gemini, Kimi token/spend logging)
 guardian.js             — Security framework: code scanning + runtime protection
 guardian/               — Guardian QA engine (validators, analyzers, reporters)
 selfcheck.js            — Automated health monitoring and cleanup

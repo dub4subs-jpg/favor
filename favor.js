@@ -76,7 +76,54 @@ if (PLATFORM === 'whatsapp') {
 // ─── API CLIENTS ───
 const OPENAI_API_KEY = config.api?.openaiApiKey || process.env.OPENAI_API_KEY;
 if (!OPENAI_API_KEY) { console.error('OPENAI_API_KEY not set.'); process.exit(1); }
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const _openaiRaw = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// ─── COST TRACKER ───
+const CostTracker = require('./costs');
+const costTracker = new CostTracker(db.db);
+console.log('[COSTS] API cost tracker initialized');
+
+// Wrap OpenAI client to auto-track costs on every call
+const openai = new Proxy(_openaiRaw, {
+  get(target, prop) {
+    if (prop === 'chat') {
+      return new Proxy(target.chat, {
+        get(chatTarget, chatProp) {
+          if (chatProp === 'completions') {
+            return new Proxy(chatTarget.completions, {
+              get(compTarget, compProp) {
+                if (compProp === 'create') {
+                  return async function(...args) {
+                    const response = await compTarget.create.apply(compTarget, args);
+                    costTracker.logOpenAI(response, 'chat');
+                    return response;
+                  };
+                }
+                return compTarget[compProp];
+              }
+            });
+          }
+          return chatTarget[chatProp];
+        }
+      });
+    }
+    if (prop === 'embeddings') {
+      return new Proxy(target.embeddings, {
+        get(embTarget, embProp) {
+          if (embProp === 'create') {
+            return async function(...args) {
+              const response = await embTarget.create.apply(embTarget, args);
+              costTracker.logEmbedding(response, 'embeddings');
+              return response;
+            };
+          }
+          return embTarget[embProp];
+        }
+      });
+    }
+    return target[prop];
+  }
+});
 // Expose Gemini key for router + compactor (they use @google/generative-ai via process.env)
 if (config.api?.geminiApiKey) process.env.GEMINI_API_KEY = config.api.geminiApiKey;
 
@@ -317,6 +364,35 @@ async function semanticSearch(query) {
   }
 }
 
+// ─── AUTO-SAVE: extract key findings from research and persist to memory ───
+async function autoSaveFindings(question, responseText, source) {
+  try {
+    const snippet = responseText.substring(0, 3000);
+    const extraction = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 300,
+      messages: [
+        { role: 'system', content: 'Extract 1-3 key facts from this research response. Return ONLY a JSON array of concise fact strings (max 200 chars each). Focus on names, conclusions, recommendations, and specific details worth remembering. If nothing worth saving, return [].' },
+        { role: 'user', content: `Question: ${question.substring(0, 200)}\n\nResponse:\n${snippet}` }
+      ]
+    });
+    const raw = extraction.choices?.[0]?.message?.content?.trim() || '[]';
+    const facts = JSON.parse(raw.replace(/```json?\n?/g, '').replace(/```/g, ''));
+    if (!Array.isArray(facts) || !facts.length) return;
+    for (const fact of facts.slice(0, 3)) {
+      if (typeof fact !== 'string' || fact.length < 10) continue;
+      const memContent = `[${source}] ${fact}`;
+      const similar = db.findSimilar('fact', memContent);
+      if (similar) continue;
+      const memId = db.save('fact', memContent.substring(0, 2000), null);
+      getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+      console.log(`[AUTO-SAVE] ${source} finding → memory #${memId}: ${fact.substring(0, 80)}`);
+    }
+  } catch (e) {
+    console.warn(`[AUTO-SAVE] ${source} extraction failed:`, e.message);
+  }
+}
+
 // ─── AUTO-RECALL: fetch relevant memories for incoming message ───
 async function autoRecallMemories(messageText) {
   if (!messageText || messageText.length < 5) return [];
@@ -477,6 +553,8 @@ const TOOLS = [
   oaiTool('topic_create', 'Create a new conversation topic/branch.', { type: 'object', properties: { name: { type: 'string', description: 'Topic name' } }, required: ['name'] }),
   oaiTool('topic_switch', 'Switch to an existing topic by ID.', { type: 'object', properties: { id: { type: 'number', description: 'Topic ID to switch to' } }, required: ['id'] }),
   oaiTool('topic_list', 'List all conversation topics for the current contact.', { type: 'object', properties: {} }),
+  oaiTool('email_search', 'Search the operator\'s Gmail inbox. Use Gmail search syntax (e.g. "from:amazon subject:order", "is:unread", "newer_than:7d"). Returns subject, sender, date, and body preview for each result.', { type: 'object', properties: { query: { type: 'string', description: 'Gmail search query' }, max_results: { type: 'number', description: 'Max emails to return (default 5, max 10)' } }, required: ['query'] }),
+  oaiTool('email_read', 'Read the full content of a specific email by message ID. Use after email_search to get the full body of a specific email.', { type: 'object', properties: { message_id: { type: 'string', description: 'Gmail message ID from email_search results' } }, required: ['message_id'] }),
   oaiTool('send_email', 'Send an email via Gmail API. Can include a PDF attachment. Use for invoices, follow-ups, etc.', { type: 'object', properties: { to: { type: 'string', description: 'Recipient email address' }, subject: { type: 'string', description: 'Email subject line' }, body: { type: 'string', description: 'Email body text' }, attachment: { type: 'string', description: 'Optional absolute path to a file to attach (e.g. /tmp/inv101.pdf)' } }, required: ['to', 'subject', 'body'] }),
   oaiTool('send_message', 'Proactively send a message to a contact.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +1XXXXXXXXXX)' }, message: { type: 'string' } }, required: ['contact', 'message'] }),
   oaiTool('send_image', 'Forward the last received image to a contact, with an optional caption.', { type: 'object', properties: { contact: { type: 'string', description: 'Phone number with country code (e.g. +1XXXXXXXXXX)' }, caption: { type: 'string', description: 'Optional caption to send with the image' } }, required: ['contact'] }),
@@ -952,6 +1030,35 @@ async function executeTool(name, input, context = {}) {
         console.log(`[PROACTIVE] Sent to ${contact}: ${input.message.substring(0, 60)}`);
         return `Message sent to ${contact}`;
       } catch (e) { return 'Send failed: ' + e.message; }
+    }
+    case 'email_search': {
+      try {
+        const { query, max_results } = input;
+        const max = Math.min(max_results || 5, 10);
+        const result = await new Promise((resolve, reject) => {
+          const { execFile } = require('child_process');
+          execFile('python3', ['/root/read-gmail.py', 'search', query, String(max)], { timeout: 30000 }, (err, stdout, stderr) => {
+            if (err) reject(new Error(stderr || err.message));
+            else resolve(stdout.trim());
+          });
+        });
+        console.log(`[EMAIL] Searched: "${query}"`);
+        return result;
+      } catch (e) { return 'Email search failed: ' + e.message; }
+    }
+    case 'email_read': {
+      try {
+        const { message_id } = input;
+        const result = await new Promise((resolve, reject) => {
+          const { execFile } = require('child_process');
+          execFile('python3', ['/root/read-gmail.py', 'read', message_id], { timeout: 30000 }, (err, stdout, stderr) => {
+            if (err) reject(new Error(stderr || err.message));
+            else resolve(stdout.trim());
+          });
+        });
+        console.log(`[EMAIL] Read message: ${message_id}`);
+        return result;
+      } catch (e) { return 'Email read failed: ' + e.message; }
     }
     case 'send_email': {
       try {
@@ -2244,7 +2351,8 @@ const OPERATOR_ONLY_TOOLS = new Set([
   'server_exec', 'read_file', 'write_file',
   'laptop_run_command', 'laptop_write_file', 'laptop_read_file', 'laptop_list_files',
   'laptop_open_app', 'laptop_open_url', 'laptop_screenshot', 'laptop_status',
-  'browser_evaluate', 'browser_fill_from_vault'
+  'browser_evaluate', 'browser_fill_from_vault',
+  'email_search', 'email_read'
 ]);
 
 const STAFF_TOOLS = new Set([
@@ -3032,9 +3140,11 @@ Context from recent conversation: ${recentContext.slice(-500)}
 Request: ${userText}
 
 Provide a detailed, well-structured analysis. Use markdown formatting.`;
-        const geminiResult = await runGeminiAnalyst(geminiPrompt);
+        const geminiResult = await runGeminiAnalyst(geminiPrompt, costTracker);
         reply = `*[Gemini Analyst]*\n\n${geminiResult}`;
         modelUsed = 'gemini-analyst';
+        // ─── AUTO-SAVE: extract & persist Gemini analyst findings ───
+        autoSaveFindings(userText, geminiResult, 'gemini').catch(() => {});
       } catch (gemErr) {
         console.warn('[ROUTER] Gemini analyst failed, escalating to GPT-4o:', gemErr.message);
         decision.route = 'full';
@@ -3051,7 +3161,7 @@ ${userText}
 Context: ${recentContext.slice(-500)}
 
 Produce a well-structured, professional output. Use markdown formatting with headers, tables, and lists as appropriate.`;
-        const kimiResult = await runKimi(kimiPrompt, config);
+        const kimiResult = await runKimi(kimiPrompt, config, costTracker);
         reply = `*[Kimi Worker]*\n\n${kimiResult}`;
         modelUsed = 'kimi-k2';
       } catch (kimiErr) {
@@ -3206,6 +3316,11 @@ Respond briefly and directly. Be yourself — follow your identity, personality,
         modelUsed = config.model.id;
       }
       if (response.choices?.[0]?.message) history.push(response.choices[0].message);
+    }
+
+    // ─── AUTO-SAVE: extract & persist web search findings ───
+    if (toolsUsed.includes('web_search') && reply && reply.length > 50) {
+      autoSaveFindings(userText, reply, 'web_search').catch(() => {});
     }
 
     // ─── TELEMETRY ───

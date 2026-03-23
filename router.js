@@ -108,6 +108,9 @@ const TOOL_KEYWORDS = [
   'ping her', 'ping him', 'ping cortana', 'follow up with',
   'email jerry', 'email her', 'email him', 'send email', 'send an email',
   'send the invoice', 'send invoice',
+  // Email search/read
+  'check my email', 'check email', 'check my inbox', 'search my email', 'search email',
+  'any emails', 'new emails', 'unread emails', 'read my email', 'look at my email',
 ];
 
 const PURCHASE_KEYWORDS = [
@@ -363,7 +366,7 @@ function logTelemetry(db, data) {
 }
 
 // ─── KIMI API EXECUTOR (Moonshot / NVIDIA NIM) ───
-async function runKimi(prompt, config) {
+async function runKimi(prompt, config, costTracker = null) {
   const apiKey = config?.api?.kimiApiKey || process.env.KIMI_API_KEY;
   if (!apiKey) throw new Error('Kimi API key not configured');
 
@@ -385,11 +388,12 @@ async function runKimi(prompt, config) {
     temperature: 0.3,
   });
 
+  if (costTracker) costTracker.logOpenAI(response, 'kimi');
   return response.choices[0]?.message?.content || '(no output)';
 }
 
 // ─── GEMINI ANALYST EXECUTOR ───
-async function runGeminiAnalyst(prompt) {
+async function runGeminiAnalyst(prompt, costTracker = null) {
   const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = gemini.getGenerativeModel({
     model: 'gemini-2.5-flash',
@@ -397,6 +401,7 @@ async function runGeminiAnalyst(prompt) {
   });
 
   const result = await model.generateContent(prompt);
+  if (costTracker) costTracker.logGemini(result, 'gemini-2.5-flash', 'analyst');
   return result.response.text() || '(no output)';
 }
 
