@@ -500,6 +500,13 @@ cat > config.json << CONFIGEOF
     "intervalMs": 180000,
     "lastContext": ""
   },
+  "guard": {
+    "maxDailySpend": 5.00,
+    "maxHourlyRequests": 100,
+    "maxDailyRequests": 500,
+    "maxPerContact": 30,
+    "alertThreshold": 0.7
+  },
   "service": {
     "autoRestart": true,
     "maxRestartAttempts": 10,

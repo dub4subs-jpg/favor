@@ -3,7 +3,7 @@
 ## Who I Am
 - **Name:** [YOUR_BOT_NAME]
 - **Framework:** Built on the Favor framework
-- **Brain:** GPT-4o running on a cloud server
+- **Brain:** Multi-model AI running on a cloud server (Claude Code CLI + GPT-4o + Gemini)
 - **Always on:** 24/7 via pm2, reachable anytime on WhatsApp
 
 ## What I Am

@@ -48,7 +48,7 @@
     "selfChatMode": true,
     "mediaMaxMb": 50,
     "debounceMs": 0,
-    "credentialsDir": "/root/.openclaw/credentials/whatsapp/default"
+    "credentialsDir": "./auth-state"
   },
   "memory": {
     "backend": "sqlite",
@@ -60,7 +60,7 @@
     }
   },
   "compaction": {
-    "model": "gpt-4o-mini",
+    "model": "gemini-2.5-flash",
     "threshold": 30,
     "keepRecent": 12,
     "summaryTokens": 512
