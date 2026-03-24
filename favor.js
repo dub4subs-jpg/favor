@@ -269,6 +269,58 @@ const compactor = new Compactor(db, {
   summaryTokens: config.compaction?.summaryTokens || 512
 });
 
+// ─── VERSION-AWARE STARTUP MESSAGE ───
+// On first boot after an update, tell the operator what's new
+function getStartupMessage() {
+  const pkg = require('./package.json');
+  const version = pkg.version;
+  const name = config.identity?.name || 'Favor';
+
+  // Check last known version from DB
+  let lastVersion = null;
+  try {
+    const row = db.db.prepare("SELECT detail FROM config_audit WHERE action = 'version' ORDER BY rowid DESC LIMIT 1").get();
+    if (row) lastVersion = row.detail;
+  } catch {}
+
+  // Save current version
+  try { db.audit('version', version); } catch {}
+
+  // If same version, just say online
+  if (lastVersion === version) {
+    return `${name} is online. (v${version})`;
+  }
+
+  // New version — read CHANGELOG.md for the latest entry
+  let changelog = '';
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
+    // Extract the first ## section (latest version)
+    const match = raw.match(/^## .+?\n([\s\S]*?)(?=\n## |\n---|\Z)/m);
+    if (match) {
+      // Clean up: take first ~800 chars, strip markdown formatting for WhatsApp
+      changelog = match[1]
+        .replace(/^### /gm, '*')           // ### Header → *Header
+        .replace(/\*\*([^*]+)\*\*/g, '*$1*') // **bold** → *bold*
+        .replace(/^- /gm, '• ')            // - bullet → • bullet
+        .trim()
+        .substring(0, 800);
+      if (match[1].trim().length > 800) changelog += '\n...';
+    }
+  } catch {}
+
+  if (changelog) {
+    const prefix = lastVersion
+      ? `${name} updated: v${lastVersion} → v${version}`
+      : `${name} is online! v${version}`;
+    return `${prefix}\n\n${changelog}`;
+  }
+
+  return lastVersion
+    ? `${name} updated to v${version}. Check CHANGELOG.md for details.`
+    : `${name} is online. (v${version})`;
+}
+
 // ─── KNOWLEDGE BASE ───
 function loadKnowledge() {
   const dir = path.resolve(__dirname, config.knowledge.dir);
@@ -1842,7 +1894,7 @@ async function startWhatsApp() {
         global._guardianSock = sock;
         global._guardianOperatorJid = operatorJid;
         try {
-          await sock.sendMessage(operatorJid, { text: 'Favor is online.' });
+          await sock.sendMessage(operatorJid, { text: getStartupMessage() });
           console.log('[FAVOR] Sent startup message to operator');
         } catch (e) {
           console.error('[FAVOR] Could not send startup message:', e.message);
@@ -2014,7 +2066,7 @@ async function startTelegram() {
         const operatorJid = `tg_${config.telegram.operatorChatId}`;
         global._guardianSock = sock;
         global._guardianOperatorJid = operatorJid;
-        sock.sendMessage(operatorJid, { text: 'Favor is online.' }).catch(e => {
+        sock.sendMessage(operatorJid, { text: getStartupMessage() }).catch(e => {
           console.error('[FAVOR] Could not send startup message:', e.message);
         });
       }
