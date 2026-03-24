@@ -122,7 +122,7 @@ claude login
 
 The setup script (`bash setup.sh`) also offers to install it for you. If you skip it during setup, you can always install later — the bot will automatically detect it on next restart.
 
-**Memory Bridge:** If you also use Claude Code interactively on your server (e.g. `claude` in the terminal for coding or research), your bot automatically learns from those sessions. Claude Code saves memories to `~/.claude/` — the Memory Bridge scans those files every 30 minutes and imports them into your bot's brain. This means your bot and Claude Code share the same understanding of who you are, your preferences, and your projects. The more you use Claude Code, the smarter your bot gets.
+**Memory Bridge:** If you also use Claude Code interactively on your server (e.g. `claude` in the terminal for coding or research), your bot automatically learns from those sessions. Claude Code saves memories to `~/.claude/` — the Memory Bridge scans those files every 5 minutes and imports them into your bot's brain. This means your bot and Claude Code share the same understanding of who you are, your preferences, and your projects. The more you use Claude Code, the smarter your bot gets.
 
 ### Build Mode
 Tell your bot to build software and it shells out to **Claude Code CLI** to do the actual coding.
@@ -266,7 +266,7 @@ guardian.js             — Security framework: code scanning + runtime protecti
 guardian/               — Guardian QA engine (validators, analyzers, reporters)
 selfcheck.js            — Automated health monitoring and cleanup
 sync.js                 — State sync between bot and external tools
-memory-bridge.js        — Syncs Claude Code CLI memories into bot brain (auto, every 30m)
+memory-bridge.js        — Syncs Claude Code CLI memories into bot brain (auto, every 5m)
 uiux.js                 — UI/UX design system engine
 watchdog.js             — Health monitoring and auto-recovery
 ```

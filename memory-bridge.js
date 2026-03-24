@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const SCAN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 let scanInterval = null;
 let _db = null;
 
@@ -213,9 +213,9 @@ function init(db) {
   const result = scan(db);
   const dirs = getClaudeMemoryDirs();
   if (dirs.length > 0) {
-    console.log(`[MEMORY-BRIDGE] Watching ${dirs.length} Claude Code memory dir(s) — syncing every 30m`);
+    console.log(`[MEMORY-BRIDGE] Watching ${dirs.length} Claude Code memory dir(s) — syncing every 5m`);
   } else {
-    console.log('[MEMORY-BRIDGE] No Claude Code memory dirs found — will check again in 30m');
+    console.log('[MEMORY-BRIDGE] No Claude Code memory dirs found — will check again in 5m');
   }
 
   // Schedule periodic scans
