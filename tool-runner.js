@@ -57,22 +57,15 @@ function loadConfig() {
 // Lazy-load only what we need to keep startup fast
 async function run() {
   try {
-    const { execSync } = require('child_process');
+    const { execFileSync } = require('child_process');
     const fs = require('fs');
     const config = loadConfig();
+    const { sshExecSync, safePowerShell, psSafeString, adbExecSync } = require('./utils/shell');
 
-    // ─── LAPTOP TOOLS ───
-    // Reads SSH connection details from config.json "laptop" section
+    // ─── DEVICE CONFIG ───
     const laptopConfig = config.laptop || {};
-    const LAPTOP_USER = laptopConfig.user || process.env.FAVOR_LAPTOP_USER || '';
-    const LAPTOP_HOST = laptopConfig.host || process.env.FAVOR_LAPTOP_IP || '';
-    const LAPTOP_PORT = laptopConfig.port || 22;
-    const LAPTOP_TIMEOUT = Math.floor((laptopConfig.connectTimeout || 5000) / 1000);
-    const LAPTOP_SSH = `ssh -o ConnectTimeout=${LAPTOP_TIMEOUT} -o StrictHostKeyChecking=no -p ${LAPTOP_PORT} ${LAPTOP_USER}@${LAPTOP_HOST}`;
-    const LAPTOP_ENABLED = laptopConfig.enabled && LAPTOP_USER && LAPTOP_HOST;
+    const LAPTOP_ENABLED = laptopConfig.enabled && laptopConfig.user && laptopConfig.host;
 
-    // ─── PHONE TOOLS ───
-    // Reads ADB connection details from config.json "phone" section
     const phoneConfig = config.phone || {};
     const PHONE_HOST = phoneConfig.host || process.env.FAVOR_PHONE_IP || '';
     const PHONE_ADB_PORT = phoneConfig.adbPort || '5555';
@@ -83,6 +76,14 @@ async function run() {
     const NOTIFY_PORT = 3099;
     const NOTIFY_TOKEN = config.notifyToken || '';
 
+    // Helper: get phone ADB target
+    function phoneTarget() {
+      const portFile = path.join(__dirname, 'data', '.adb-port');
+      let port = PHONE_ADB_PORT;
+      try { port = fs.readFileSync(portFile, 'utf8').trim(); } catch {}
+      return `${PHONE_HOST}:${port}`;
+    }
+
     switch (toolName) {
 
       // ─── LAPTOP TOOLS ───
@@ -90,7 +91,7 @@ async function run() {
       case 'laptop_screenshot': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured. Set laptop.enabled, laptop.user, and laptop.host in config.json.'); break; }
         // Use favor.js's /trigger endpoint (has proper screenshot capture + send)
-        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Authorization: Bearer ${NOTIFY_TOKEN}' -H 'Content-Type: application/json' -d '{"action":"laptop_screenshot"}'`, { timeout: 30000 });
+        execFileSync('curl', ['-s', '-X', 'POST', `http://localhost:${NOTIFY_PORT}/trigger`, '-H', `Authorization: Bearer ${NOTIFY_TOKEN}`, '-H', 'Content-Type: application/json', '-d', '{"action":"laptop_screenshot"}'], { timeout: 30000 });
         console.log('Screenshot captured and sent.');
         break;
       }
@@ -111,39 +112,44 @@ async function run() {
         };
         const mapped = laptopApps[app.toLowerCase()];
         if (mapped) app = mapped;
-        execSync(`${LAPTOP_SSH} 'powershell -Command "Register-ScheduledTask -TaskName TmpOpen -Action (New-ScheduledTaskAction -Execute \\"${app}\\") -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2)) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries) -Force; Start-ScheduledTask -TaskName TmpOpen"'`, { timeout: 15000, encoding: 'utf8' });
+        // Use -EncodedCommand to avoid all shell escaping issues
+        const psCode = `Register-ScheduledTask -TaskName TmpOpen -Action (New-ScheduledTaskAction -Execute ${psSafeString(app)}) -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2)) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries) -Force; Start-ScheduledTask -TaskName TmpOpen`;
+        sshExecSync(laptopConfig, safePowerShell(psCode), { timeout: 15000 });
         console.log(`Opened: ${app}`);
         break;
       }
       case 'laptop_open_url': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured.'); break; }
-        const url = input.url;
-        execSync(`${LAPTOP_SSH} 'powershell -Command "Start-Process \\"${url}\\""'`, { timeout: 10000 });
-        console.log(`Opened URL: ${url}`);
+        const psCode = `Start-Process ${psSafeString(input.url)}`;
+        sshExecSync(laptopConfig, safePowerShell(psCode), { timeout: 10000 });
+        console.log(`Opened URL: ${input.url}`);
         break;
       }
       case 'laptop_run_command': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured.'); break; }
-        const result = execSync(`${LAPTOP_SSH} 'powershell -Command "${input.command.replace(/"/g, '\\"')}"'`, { timeout: 30000, encoding: 'utf8' });
+        // Use -EncodedCommand so the user's command is never parsed by any intermediate shell
+        const result = sshExecSync(laptopConfig, safePowerShell(input.command), { timeout: 30000 });
         console.log(result.trim());
         break;
       }
       case 'laptop_read_file': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured.'); break; }
-        const result = execSync(`${LAPTOP_SSH} 'powershell -Command "Get-Content \\"${input.file_path}\\" -Raw"'`, { timeout: 15000, encoding: 'utf8' });
+        const psCode = `Get-Content ${psSafeString(input.file_path)} -Raw`;
+        const result = sshExecSync(laptopConfig, safePowerShell(psCode), { timeout: 15000 });
         console.log(result.trim());
         break;
       }
       case 'laptop_list_files': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured.'); break; }
-        const result = execSync(`${LAPTOP_SSH} 'powershell -Command "Get-ChildItem \\"${input.directory}\\" | Format-Table Name, Length, LastWriteTime"'`, { timeout: 15000, encoding: 'utf8' });
+        const psCode = `Get-ChildItem ${psSafeString(input.directory)} | Format-Table Name, Length, LastWriteTime`;
+        const result = sshExecSync(laptopConfig, safePowerShell(psCode), { timeout: 15000 });
         console.log(result.trim());
         break;
       }
       case 'laptop_status': {
         if (!LAPTOP_ENABLED) { console.log('Laptop access not configured.'); break; }
         try {
-          execSync(`${LAPTOP_SSH} 'echo online'`, { timeout: 5000 });
+          sshExecSync(laptopConfig, 'echo online', { timeout: 5000 });
           console.log('Laptop is ONLINE');
         } catch {
           console.log('Laptop is OFFLINE');
@@ -156,16 +162,13 @@ async function run() {
       case 'phone_screenshot': {
         if (!PHONE_ENABLED) { console.log('Phone access not configured. Set phone.enabled and phone.host in config.json.'); break; }
         // Use favor.js's /trigger endpoint (sends screenshot via messaging platform)
-        execSync(`curl -s -X POST http://localhost:${NOTIFY_PORT}/trigger -H 'Authorization: Bearer ${NOTIFY_TOKEN}' -H 'Content-Type: application/json' -d '{"action":"phone_screenshot"}'`, { timeout: 30000 });
+        execFileSync('curl', ['-s', '-X', 'POST', `http://localhost:${NOTIFY_PORT}/trigger`, '-H', `Authorization: Bearer ${NOTIFY_TOKEN}`, '-H', 'Content-Type: application/json', '-d', '{"action":"phone_screenshot"}'], { timeout: 30000 });
         console.log('Phone screenshot captured and sent.');
         break;
       }
       case 'phone_open_app': {
         if (!PHONE_ENABLED) { console.log('Phone access not configured.'); break; }
-        const portFile = path.join(__dirname, 'data', '.adb-port');
-        let port = PHONE_ADB_PORT;
-        try { port = fs.readFileSync(portFile, 'utf8').trim(); } catch {}
-        const target = `${PHONE_HOST}:${port}`;
+        const target = phoneTarget();
         const app = input.app;
         // Common app name -> Android package mappings
         const pkgMap = {
@@ -186,23 +189,22 @@ async function run() {
         // If not in map and doesn't look like a package name, try to find it
         if (!pkg.includes('.')) {
           try {
-            const found = execSync(`${ADB} -s ${target} shell pm list packages | grep -i "${app.toLowerCase()}" | head -1`, { timeout: 5000, encoding: 'utf8' }).trim();
-            if (found) pkg = found.replace('package:', '');
+            const allPkgs = adbExecSync(ADB, target, ['shell', 'pm', 'list', 'packages'], { timeout: 5000 });
+            const match = allPkgs.split('\n').find(line => line.toLowerCase().includes(app.toLowerCase()));
+            if (match) pkg = match.trim().replace('package:', '');
           } catch {}
         }
-        execSync(`${ADB} -s ${target} shell monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`, { timeout: 10000, encoding: 'utf8' });
+        adbExecSync(ADB, target, ['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { timeout: 10000 });
         console.log(`Opened: ${app} (${pkg})`);
         break;
       }
       case 'phone_status': {
         if (!PHONE_ENABLED) { console.log('Phone access not configured.'); break; }
-        const portFile2 = path.join(__dirname, 'data', '.adb-port');
-        let port2 = PHONE_ADB_PORT;
-        try { port2 = fs.readFileSync(portFile2, 'utf8').trim(); } catch {}
-        const target2 = `${PHONE_HOST}:${port2}`;
+        const target = phoneTarget();
         try {
-          const battery = execSync(`${ADB} -s ${target2} shell dumpsys battery | grep -E "level|status"`, { timeout: 5000, encoding: 'utf8' });
-          console.log(`Phone ONLINE\n${battery.trim()}`);
+          const battery = adbExecSync(ADB, target, ['shell', 'dumpsys', 'battery'], { timeout: 5000 });
+          const lines = battery.split('\n').filter(l => /level|status/i.test(l)).join('\n');
+          console.log(`Phone ONLINE\n${lines.trim()}`);
         } catch {
           console.log('Phone OFFLINE');
         }
@@ -210,11 +212,9 @@ async function run() {
       }
       case 'phone_shell': {
         if (!PHONE_ENABLED) { console.log('Phone access not configured.'); break; }
-        const portFile3 = path.join(__dirname, 'data', '.adb-port');
-        let port3 = PHONE_ADB_PORT;
-        try { port3 = fs.readFileSync(portFile3, 'utf8').trim(); } catch {}
-        const target3 = `${PHONE_HOST}:${port3}`;
-        const result = execSync(`${ADB} -s ${target3} shell ${input.command}`, { timeout: 15000, encoding: 'utf8' });
+        const target = phoneTarget();
+        // phone_shell intentionally runs arbitrary commands (operator-only tool)
+        const result = adbExecSync(ADB, target, ['shell', input.command], { timeout: 15000 });
         console.log(result.trim());
         break;
       }
@@ -222,6 +222,8 @@ async function run() {
       // ─── SERVER TOOLS ───
 
       case 'server_exec': {
+        // server_exec intentionally runs arbitrary commands (operator-only tool)
+        const { execSync } = require('child_process');
         const result = execSync(input.command, { timeout: 30000, encoding: 'utf8', maxBuffer: 1024 * 1024 });
         console.log(result.trim());
         break;
@@ -269,7 +271,10 @@ async function run() {
       // ─── WEB SEARCH ───
 
       case 'web_search': {
-        const result = execSync(`claude -p "Search the web for: ${input.query.replace(/"/g, '\\"')}. Summarize the top results concisely." --allowedTools WebSearch --model haiku`, { timeout: 60000, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY')) });
+        // Use execFileSync with argument array — no shell interpolation of user query
+        const claudeEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY'));
+        const prompt = `Search the web for: ${input.query}. Summarize the top results concisely.`;
+        const result = execFileSync('claude', ['-p', prompt, '--allowedTools', 'WebSearch', '--model', 'haiku'], { timeout: 60000, encoding: 'utf8', env: claudeEnv });
         console.log(result.trim());
         break;
       }

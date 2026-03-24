@@ -92,10 +92,61 @@ class FavorMemory {
       CREATE INDEX IF NOT EXISTS idx_taught_contact ON taught_commands(contact, enabled);
       CREATE INDEX IF NOT EXISTS idx_taught_trigger ON taught_commands(trigger_phrase);
     `);
-    // Add columns to existing DBs that predate these migrations
-    try { this.db.exec(`ALTER TABLE memories ADD COLUMN embedding TEXT`); } catch (_) {}
-    try { this.db.exec(`ALTER TABLE memories ADD COLUMN contact TEXT`); } catch (_) {}
-    try { this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_contact ON memories(contact)`); } catch (_) {}
+    // ─── SCHEMA VERSIONING ───
+    this.db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)`);
+    const currentVersion = this.db.prepare('SELECT MAX(version) as v FROM schema_version').get()?.v || 0;
+
+    const migrations = [
+      // v1: Add embedding + contact columns to memories
+      () => {
+        try { this.db.exec(`ALTER TABLE memories ADD COLUMN embedding TEXT`); } catch (_) {}
+        try { this.db.exec(`ALTER TABLE memories ADD COLUMN contact TEXT`); } catch (_) {}
+        try { this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_contact ON memories(contact)`); } catch (_) {}
+      },
+      // v2: Add cost_logs table
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS cost_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model TEXT, route TEXT, caller TEXT,
+            input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+            cost REAL DEFAULT 0, timestamp TEXT DEFAULT (datetime('now'))
+          );
+        `);
+      },
+      // v3: Add guard_logs table
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS guard_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT, action TEXT NOT NULL, reason TEXT,
+            timestamp TEXT DEFAULT (datetime('now'))
+          );
+        `);
+      },
+      // v4: Add router_telemetry table
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS router_telemetry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            route TEXT, model TEXT, success INTEGER DEFAULT 1,
+            tools_used TEXT, latency_ms INTEGER,
+            timestamp TEXT DEFAULT (datetime('now'))
+          );
+        `);
+      },
+    ];
+
+    // Apply only new migrations
+    for (let i = currentVersion; i < migrations.length; i++) {
+      try {
+        migrations[i]();
+        this.db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(i + 1);
+      } catch (e) {
+        console.error(`[DB] Migration v${i + 1} failed:`, e.message);
+        break; // Stop on failure — don't skip migrations
+      }
+    }
   }
 
   // ─── MEMORY ───

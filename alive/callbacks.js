@@ -1,58 +1,11 @@
 // ─── ALIVE: MEMORY CALLBACKS ───
 // Resurfaces forgotten tasks, old decisions, and relevant facts
 
-const { spawn } = require('child_process');
-const fs = require('fs');
-
-// ─── CLAUDE CLI AUTO-DETECTION ───
-const { execSync } = require('child_process');
-let CLAUDE_BIN = null;
-
-(function detectClaudeCLI() {
-  const candidates = [
-    process.env.CLAUDE_BIN,
-    '/root/.local/bin/claude',
-    '/usr/local/bin/claude',
-    '/home/' + (process.env.USER || 'root') + '/.local/bin/claude',
-  ].filter(Boolean);
-  for (const bin of candidates) {
-    try { if (fs.existsSync(bin)) { CLAUDE_BIN = bin; return; } } catch {}
-  }
-  try {
-    const which = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (which) { CLAUDE_BIN = which; return; }
-  } catch {}
-})();
-
-// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
-function claudeEnv() {
-  const binDir = CLAUDE_BIN ? require('path').dirname(CLAUDE_BIN) : '/root/.local/bin';
-  return Object.fromEntries(
-    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
-      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
-  );
-}
+const { runCLI, isAvailable } = require('../utils/claude');
 
 function runClaudeHaiku(prompt, timeoutMs = 30000) {
-  if (!CLAUDE_BIN) return Promise.reject(new Error('Claude Code CLI not installed'));
-  return new Promise((resolve, reject) => {
-    const proc = spawn(CLAUDE_BIN, ['--print', '--model', 'haiku', '--allowedTools', '', '-'], {
-      timeout: timeoutMs,
-      env: claudeEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '', stderr = '';
-    proc.stdout.on('data', d => stdout += d);
-    proc.stderr.on('data', d => stderr += d);
-    proc.on('close', (code) => {
-      const out = stdout.trim() || stderr.trim() || '';
-      if (code !== 0 && !stdout.trim()) reject(new Error(stderr.trim() || `exit code ${code}`));
-      else resolve(out);
-    });
-    proc.on('error', reject);
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
+  if (!isAvailable()) return Promise.reject(new Error('Claude Code CLI not installed'));
+  return runCLI(prompt, { model: 'haiku', timeout: timeoutMs });
 }
 
 class Callbacks {

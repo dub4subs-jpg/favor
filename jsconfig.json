@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "checkJs": false,
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["core/*"],
+      "@utils/*": ["utils/*"],
+      "@plugins/*": ["plugins/*"]
+    }
+  },
+  "include": ["**/*.js"],
+  "exclude": ["node_modules", "data", "backups", "__tests__"]
+}

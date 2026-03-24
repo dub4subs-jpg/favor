@@ -14,9 +14,10 @@ class Vault {
       throw new Error('Vault requires an encryption key (min 8 chars) in config.vault.secret');
     }
     this.db = db;
-    // Derive a 32-byte key from the passphrase
-    this.key = crypto.scryptSync(encryptionKey, 'favor-vault-salt', 32);
     this._migrate();
+    // Derive a 32-byte key using a per-instance salt (stored in DB)
+    const salt = this._getOrCreateSalt();
+    this.key = crypto.scryptSync(encryptionKey, salt, 32);
   }
 
   _migrate() {
@@ -31,7 +32,20 @@ class Vault {
       );
       CREATE INDEX IF NOT EXISTS idx_vault_category ON vault(category);
       CREATE INDEX IF NOT EXISTS idx_vault_label ON vault(label);
+      CREATE TABLE IF NOT EXISTS vault_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
+  }
+
+  _getOrCreateSalt() {
+    const row = this.db.prepare('SELECT value FROM vault_meta WHERE key = ?').get('salt');
+    if (row) return row.value;
+    // Generate a random 32-byte salt on first use, store it permanently
+    const salt = crypto.randomBytes(32).toString('hex');
+    this.db.prepare('INSERT INTO vault_meta (key, value) VALUES (?, ?)').run('salt', salt);
+    return salt;
   }
 
   _encrypt(plaintext) {

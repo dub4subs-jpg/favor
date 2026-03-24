@@ -5,58 +5,13 @@ const { execFile, spawn } = require('child_process');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 
-// ─── CLAUDE CLI AUTO-DETECTION ───
-// Finds Claude Code CLI wherever it's installed (not just /root/.local/bin)
-const { execSync } = require('child_process');
-let CLAUDE_BIN = null;
-let CLAUDE_AVAILABLE = false;
+// ─── CLAUDE CLI (shared detection + env) ───
+const claude = require('./utils/claude');
+let CLAUDE_BIN = claude.getClaudeBin();
+let CLAUDE_AVAILABLE = claude.isAvailable();
 let _claudeTipSent = false;
 
-function detectClaudeCLI() {
-  // Check common install locations + PATH
-  const candidates = [
-    process.env.CLAUDE_BIN,                    // explicit override via env
-    '/root/.local/bin/claude',                 // default Linux install
-    '/usr/local/bin/claude',                   // system-wide install
-    '/home/' + (process.env.USER || 'root') + '/.local/bin/claude',
-  ].filter(Boolean);
-
-  for (const bin of candidates) {
-    try {
-      const fs = require('fs');
-      if (fs.existsSync(bin)) {
-        CLAUDE_BIN = bin;
-        CLAUDE_AVAILABLE = true;
-        console.log(`[ROUTER] Claude Code CLI found: ${bin}`);
-        return;
-      }
-    } catch {}
-  }
-
-  // Last resort: check PATH
-  try {
-    const which = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (which) {
-      CLAUDE_BIN = which;
-      CLAUDE_AVAILABLE = true;
-      console.log(`[ROUTER] Claude Code CLI found in PATH: ${which}`);
-      return;
-    }
-  } catch {}
-
-  console.warn('[ROUTER] Claude Code CLI not found — claude/chat/mini routes will fall back to GPT-4o.');
-  console.warn('[ROUTER] Install it for better responses: curl -fsSL https://claude.ai/install.sh | sh');
-}
-detectClaudeCLI();
-
-// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription, not API key
-function claudeEnv() {
-  const binDir = CLAUDE_BIN ? require('path').dirname(CLAUDE_BIN) : '/root/.local/bin';
-  return Object.fromEntries(
-    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
-      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
-  );
-}
+function claudeEnv() { return claude.claudeEnv(); }
 
 // ─── ROUTE DEFINITIONS ───
 // tool    → direct tool execution, minimal/no model reasoning needed
