@@ -42,7 +42,8 @@ build-mode.js   — Claude Code CLI integration for building software projects
 guardian.js     — Unified security framework: code scanning + runtime guard
 guardian/       — Guardian QA engine (validators, discovery, regression, repair, reporter)
 selfcheck.js    — Automated health monitoring, cleanup, and sanitization
-alive.js        — Proactive personality engine (check-ins + memory callbacks, Claude CLI)
+alive/          — Proactive personality engine (check-ins + memory callbacks, Claude CLI)
+monitor.js      — Process and system monitoring
 sync.js         — State sync between bot and external tools
 uiux.js         — UI/UX design system engine (161 industry rules)
 watchdog.js     — Health monitoring and auto-recovery

@@ -1,4 +1,4 @@
-// build-mode.js — Build Mode skill for DellV2
+// build-mode.js — Build Mode skill for Favor
 // Shells out to Claude Code CLI to build software projects
 // Manages multi-step builds with progress updates via WhatsApp
 
