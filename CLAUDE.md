@@ -45,7 +45,7 @@ selfcheck.js    — Automated health monitoring, cleanup, and sanitization
 alive/          — Proactive personality engine (check-ins + memory callbacks, Claude CLI)
 monitor.js      — Process and system monitoring
 sync.js         — State sync between bot and external tools
-memory-bridge.js — Syncs Claude Code CLI memories into bot's SQLite (auto, every 5m)
+memory-bridge.js — Syncs Claude Code CLI memories into bot's SQLite (auto, every 2m)
 uiux.js         — UI/UX design system engine (161 industry rules)
 watchdog.js     — Health monitoring and auto-recovery
 costs.js        — API cost tracker (OpenAI, Gemini, Kimi — auto-logs token usage and estimated spend)

@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SCAN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SCAN_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 let scanInterval = null;
 let _db = null;
 let _getEmbedding = null; // injected from favor.js
@@ -336,9 +336,9 @@ function init(db, getEmbeddingFn) {
   const result = scan(db);
   const dirs = getClaudeMemoryDirs();
   if (dirs.length > 0) {
-    console.log(`[MEMORY-BRIDGE] Watching ${dirs.length} Claude Code memory dir(s) — syncing every 5m`);
+    console.log(`[MEMORY-BRIDGE] Watching ${dirs.length} Claude Code memory dir(s) — syncing every 2m`);
   } else {
-    console.log('[MEMORY-BRIDGE] No Claude Code memory dirs found — will check again in 5m');
+    console.log('[MEMORY-BRIDGE] No Claude Code memory dirs found — will check again in 2m');
   }
 
   // Generate embeddings after a delay — let the existing backfill finish first
