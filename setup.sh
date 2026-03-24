@@ -68,6 +68,23 @@ else
     ISSUES+=("build_missing")
 fi
 
+# ─── Media tools ───
+if command -v yt-dlp &> /dev/null; then
+    echo "  [✓] yt-dlp $(yt-dlp --version 2>/dev/null)"
+else
+    echo "  [ ] yt-dlp — not installed (optional, for video features)"
+fi
+if command -v ffmpeg &> /dev/null; then
+    echo "  [✓] ffmpeg"
+else
+    echo "  [ ] ffmpeg — not installed (optional, for video features)"
+fi
+if command -v chromium-browser &> /dev/null || command -v chromium &> /dev/null; then
+    echo "  [✓] Chromium"
+else
+    echo "  [ ] Chromium — not installed (optional, for browser features)"
+fi
+
 # ─── Claude Code ───
 if command -v claude &> /dev/null; then
     CLAUDE_VER=$(claude --version 2>/dev/null || echo "installed")
@@ -174,6 +191,53 @@ fi
 echo "  [*] Installing bot dependencies..."
 npm install --silent 2>&1 | tail -1
 echo "  [✓] Dependencies ready"
+
+# ─── Optional: Video + Browser tools ───
+echo ""
+echo "  Want video + browser features?"
+echo "  (Download YouTube/TikTok, browse websites, fill forms, take screenshots)"
+echo "  This installs yt-dlp, ffmpeg, and Chromium (~500MB disk)."
+echo ""
+read -p "  Install video + browser tools? (y/N): " INSTALL_MEDIA
+INSTALL_MEDIA="${INSTALL_MEDIA:-N}"
+
+if [ "$INSTALL_MEDIA" = "y" ] || [ "$INSTALL_MEDIA" = "Y" ]; then
+    echo ""
+    # yt-dlp
+    if command -v yt-dlp &> /dev/null; then
+        echo "  [✓] yt-dlp already installed"
+    else
+        echo "  [*] Installing yt-dlp..."
+        curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp 2>/dev/null
+        chmod a+rx /usr/local/bin/yt-dlp
+        echo "  [✓] yt-dlp installed"
+    fi
+
+    # ffmpeg
+    if command -v ffmpeg &> /dev/null; then
+        echo "  [✓] ffmpeg already installed"
+    else
+        echo "  [*] Installing ffmpeg..."
+        apt install -y ffmpeg > /dev/null 2>&1
+        echo "  [✓] ffmpeg installed"
+    fi
+
+    # Chromium for Puppeteer
+    if command -v chromium-browser &> /dev/null || command -v chromium &> /dev/null; then
+        echo "  [✓] Chromium already installed"
+    else
+        echo "  [*] Installing Chromium (for browser automation)..."
+        apt install -y chromium-browser 2>/dev/null || apt install -y chromium 2>/dev/null
+        echo "  [✓] Chromium installed"
+    fi
+    echo ""
+else
+    echo "  [i] Skipped — you can install later:"
+    echo "       yt-dlp:   curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
+    echo "       ffmpeg:   apt install -y ffmpeg"
+    echo "       chromium: apt install -y chromium-browser"
+    echo ""
+fi
 
 # Create directories
 mkdir -p data auth-state
