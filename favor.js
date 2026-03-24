@@ -293,30 +293,51 @@ function getStartupMessage() {
     return `${name} is online. _${tagline}_`;
   }
 
-  // New version — read the "What you can do now" section from CHANGELOG.md
+  // New version — collect ALL "What you can now do" sections between old and new version
+  // If user skipped several versions, they see everything they missed
   let whatsNew = '';
   try {
     const raw = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
-    // Look for a "What's new" / "You can now" section first, fall back to first ## block
-    const userSection = raw.match(/^### What you can now do\n([\s\S]*?)(?=\n### |\n## |\n---)/m);
-    if (userSection) {
-      whatsNew = userSection[1].trim();
-    } else {
-      // Fall back: grab first ## section, but only bullet points (skip headers/technical detail)
-      const match = raw.match(/^## .+?\n([\s\S]*?)(?=\n## |\n---)/m);
-      if (match) {
-        whatsNew = match[1]
+
+    // Split changelog into version blocks: ## [date] vX.Y.Z — Title
+    const blocks = raw.split(/(?=^## \[)/m).filter(b => b.startsWith('## ['));
+
+    const collected = [];
+    for (const block of blocks) {
+      // Extract version from header: ## [2026-03-24] v4.0.0 — Title
+      const verMatch = block.match(/^## \[.*?\]\s*v?([\d.]+)/);
+      if (!verMatch) continue;
+      const blockVersion = verMatch[1];
+
+      // Skip versions the user already had
+      if (lastVersion && blockVersion <= lastVersion) break;
+
+      // Extract user-facing bullet points from "What you can now do" section
+      const userSection = block.match(/### What you can now do\n([\s\S]*?)(?=\n### |\n## |$)/);
+      if (userSection) {
+        const bullets = userSection[1].trim()
           .split('\n')
           .filter(line => line.startsWith('- ') || line.startsWith('* '))
           .map(line => line.replace(/^[-*] /, '• ').replace(/\*\*([^*]+)\*\*/g, '*$1*'))
-          .join('\n')
-          .substring(0, 600);
+          .join('\n');
+        if (bullets) collected.push(bullets);
+      } else {
+        // Fall back: grab any bullet points from the block
+        const bullets = block.split('\n')
+          .filter(line => line.startsWith('- ') || line.startsWith('* '))
+          .map(line => line.replace(/^[-*] /, '• ').replace(/\*\*([^*]+)\*\*/g, '*$1*'))
+          .join('\n');
+        if (bullets) collected.push(bullets);
       }
     }
+
+    whatsNew = collected.join('\n').substring(0, 1500);
+    if (collected.join('\n').length > 1500) whatsNew += '\n...';
   } catch {}
 
+  const skippedMultiple = lastVersion && version.split('.')[1] - lastVersion.split('.')[1] > 1;
   const header = lastVersion
-    ? `${name} updated to v${version}`
+    ? `${name} updated: v${lastVersion} → v${version}${skippedMultiple ? '\n\nHere\'s everything you missed:' : ''}`
     : `${name} is online! v${version}`;
 
   if (whatsNew) {
