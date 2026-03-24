@@ -94,6 +94,11 @@ const OPENAI_API_KEY = config.api?.openaiApiKey || process.env.OPENAI_API_KEY;
 if (!OPENAI_API_KEY) { console.warn('[BOOT] OPENAI_API_KEY not set — running on Claude CLI only (free via Max subscription)'); }
 const _openaiRaw = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
+// ─── DATABASE (must init before cost tracker and vault) ───
+const dbPath = path.resolve(__dirname, config.memory.dbPath);
+const db = new FavorMemory(dbPath);
+db.audit('boot', `Favor starting. Model: ${config.model.id}`);
+
 // ─── COST TRACKER ───
 const CostTracker = require('./costs');
 const costTracker = new CostTracker(db.db);
@@ -143,11 +148,6 @@ const openai = _openaiRaw ? new Proxy(_openaiRaw, {
 // Expose Gemini key for router + compactor (they use @google/generative-ai via process.env)
 if (config.api?.geminiApiKey) process.env.GEMINI_API_KEY = config.api.geminiApiKey;
 
-// ─── DATABASE ───
-const dbPath = path.resolve(__dirname, config.memory.dbPath);
-const db = new FavorMemory(dbPath);
-db.audit('boot', `Favor starting. Model: ${config.model.id}`);
-
 // ─── VAULT (encrypted personal data) ───
 let vault = null;
 try {
@@ -175,6 +175,10 @@ const buildMode = new BuildMode(db);
 console.log('[BUILD] Build mode initialized');
 
 // ─── PLUGIN SYSTEM ───
+// ─── TOOLS (OpenAI format) — must init before plugins ───
+const { TOOLS: _TOOL_DEFS, oaiTool } = require('./core/tool-definitions');
+const TOOLS = _TOOL_DEFS;
+
 const PluginLoader = require('./core/plugin-loader');
 const pluginLoader = new PluginLoader();
 const pluginResult = pluginLoader.load();
@@ -631,16 +635,9 @@ async function transcribeVoice(audioBuffer, mimetype) {
   }
 }
 
-// ─── TOOLS (OpenAI format) ───
-// Tool definitions extracted to core/tool-definitions.js
-const { TOOLS: _TOOL_DEFS, oaiTool } = require('./core/tool-definitions');
-const TOOLS = _TOOL_DEFS;
+// TOOLS and oaiTool already loaded above (before plugin loader)
 // Instance-specific tools can be appended: TOOLS.push(oaiTool(...))
 // All core definitions are in core/tool-definitions.js
-//
-// REMOVED: ~210 lines of inline tool definitions (now in core/tool-definitions.js)
-// The old inline tool definitions have been removed.
-// See core/tool-definitions.js for all tool schemas.
 
 // ─── PROMPT INJECTION DEFENSE ───
 // Centralized sanitizer for ALL untrusted external content
