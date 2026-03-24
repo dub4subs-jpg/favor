@@ -81,9 +81,10 @@ Only OpenAI is required. Everything else is optional but recommended. **Claude C
 ### Alive Engine
 Your bot feels alive — not just a tool that waits for commands.
 
-- **Morning check-in** — Greets you each morning with relevant context from memory (pending tasks, deadlines, recent decisions)
+- **Morning intelligence brief** — Structured daily briefing: yesterday's recap, today's schedule, pending tasks, open threads, actionable signals
 - **Evening wind-down** — Casual end-of-day recap or just vibes if nothing happened
 - **Memory callbacks** — Periodically resurfaces forgotten tasks, old decisions worth revisiting, or facts that connect to what you're doing now
+- **Notification batching** — Multiple proactive messages within 2 minutes get combined into one message instead of spamming you
 
 The AI can skip a check-in if there's nothing worth saying. Memory callbacks have a 7-day cooldown per memory so it won't nag. Costs ~$0.01-0.03/day.
 
@@ -171,6 +172,118 @@ Taught commands run **deterministically** — same trigger, same steps, every ti
 "teach: when I say 'backup', tar my project folder and copy it to /root/backups"
 ```
 
+### Smart Tool Selection
+Your bot has 80+ tools, but most messages only need 5-10. Instead of sending all tools to the AI on every message (wasting tokens and confusing the model), Favor **pre-filters tools** based on the route + message keywords.
+
+- Chat message "hello" → 7 core tools (memory, search, send)
+- "Take a screenshot of my laptop" → core + laptop tools (~12 total)
+- Tool route with browser keywords → full relevant set
+
+**Result:** 70-90% token savings per API call. Faster responses, lower costs, fewer model mistakes.
+
+### Self-Improvement Loop
+Your bot learns from its own behavior over time.
+
+- **Every 6 hours**, analyzes recent interactions from telemetry data
+- Scores interactions (0-10) based on: tool failures, retry patterns, response time, success rate
+- Sends worst interactions to Claude Haiku for behavioral lesson extraction
+- Stores lessons with confidence scores — only proven lessons (reinforced multiple times) get injected into future prompts
+- Stale lessons auto-retire after 30 days without reinforcement
+
+Example lessons it might learn: *"web_search fails 40% for product lookups — use browser_navigate instead"*, *"batch vault_save calls instead of calling 8 times sequentially"*
+
+### Knowledge Graph
+Your bot doesn't just remember facts — it maps **relationships between entities**.
+
+- Automatically extracts people, companies, products, projects from conversations
+- Tracks relationships: "Jerry works_at Speedy Distribution", "Speedy supplies product X"
+- Ask *"who do I do business with?"* or *"what's connected to Speedy?"* → searches the graph
+- Entities are deduplicated by name and strengthen over time with repeated mentions
+
+### Conversation Replay
+Never lose a conversation to compaction again.
+
+- **Daily digests** — At 11pm, your bot summarizes the day's conversations into a permanent record
+- Digests include: topics discussed, decisions made, tasks assigned, key facts
+- Ask *"what were we talking about last Tuesday?"* → searches daily digests
+- Supports relative dates: "yesterday", "last monday", "march 15"
+- Digests are **permanent** — they survive compaction and memory consolidation
+
+### Passive Learning
+When you forward messages, share links, or send screenshots without asking a question, your bot **silently absorbs the information** instead of trying to respond.
+
+- Detects forwarded messages, bare URLs, and media without questions
+- Extracts entities, prices, dates, contacts, products from the content
+- Stores as "signals" — lower-confidence than memories, surfaced naturally when relevant
+- Reacts with a 👀 emoji to acknowledge without interrupting
+
+### Dynamic Recipes
+Extend teach mode with **dynamic parameter passing** between steps.
+
+- `$input` — the user's message text after the trigger phrase
+- `$prev` — output of the previous step
+- `$step[N]` — output of step N
+- `$step[N].extract(url)` — extract a URL from step N's output
+
+Example: *"research [topic]"* → web_search($input) → browser_navigate($step[0].extract(url)) → memory_save($prev)
+
+### Conversation Threading
+Your bot silently tags every message with a topic (e.g., `packaging+inventory`, `flight+medellin`).
+
+- When you return to an old topic, relevant older messages are pulled back into context
+- Compaction produces per-topic summaries instead of flat blobs
+- Pure text processing — no AI call, <1ms per message
+- Tags are invisible to you — they just make context smarter
+
+### Voice Responses
+When you send a voice note, your bot can reply with a voice note too.
+
+- Uses **edge-tts** (free, no API key) or **OpenAI TTS** (paid fallback)
+- Voice notes render as waveform in WhatsApp/Telegram (ptt mode)
+- Falls back to text if TTS is unavailable
+- Config: `"voice": { "ttsEnabled": true, "ttsVoice": "en-US-GuyNeural" }`
+
+Install: `pip install edge-tts` (optional — text replies work without it)
+
+### Agent Delegation
+Offload heavy research to background tasks.
+
+- Say *"research the best frameworks for building chatbots"* → spawns a Claude CLI subprocess
+- Task runs in the background while you keep chatting
+- Results are sent as a WhatsApp/Telegram message when done
+- Max 3 concurrent background tasks
+- Say *"check tasks"* to see running tasks
+
+### Retry Engine
+When a tool fails, your bot gets smart suggestions for alternatives.
+
+- Laptop offline? → *"(Hint: try phone_screenshot as alternative)"*
+- Web search failed? → *"(Hint: try browser_navigate as alternative)"*
+- The AI decides whether to act on hints — keeps the model in control, not hardcoded retries
+
+### Trust Levels
+Graduate from binary operator/non-operator to 4 trust tiers:
+
+| Level | Routes | Tools | Rate Limit |
+|-------|--------|-------|------------|
+| **Operator** | All | All | Unlimited |
+| **Staff** | tool, hybrid, chat, mini, memory, full | All except admin (server_exec, build, guardian) | 50/hr |
+| **Customer** | chat, mini, memory | web_search, memory_search, knowledge_search | 20/hr |
+| **Guest** | chat only | None | 5/hr |
+
+Configure in `config.json`:
+```json
+"contactPermissions": { "+1234567890": "staff" },
+"trustDefaults": { "trustedContacts": "staff", "verified": "customer" }
+```
+
+### Cost Dashboard
+See exactly where your money goes.
+
+- `/costs` command → today/week/month totals, cost by model, cost by route, 7-day trend
+- Tracks every OpenAI, Gemini, and Kimi API call automatically
+- Visual bar chart trend in the chat
+
 ### Self-Check
 
 Automated health monitoring and cleanup that runs every 3 days:
@@ -190,6 +303,7 @@ Automated health monitoring and cleanup that runs every 3 days:
 /memory         See what your bot remembers
 /model gpt-4o   Switch AI model
 /crons          View scheduled tasks
+/costs          API cost dashboard (today/week/month)
 /clear          Clear conversation history
 /reload         Reload config without restarting
 /help           See all commands

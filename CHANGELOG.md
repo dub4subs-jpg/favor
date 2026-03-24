@@ -4,6 +4,44 @@ All notable updates to Favor. When you run `./update.sh`, you'll see what's new.
 
 ---
 
+## [2026-03-24] v4.0.0 — Intelligence Engine
+
+The biggest update yet. Favor now learns from its own behavior, maps relationships between entities, replays past conversations, delegates background research, replies with voice notes, and cuts API costs by 70-90% with smart tool selection.
+
+### New capabilities
+- **Self-improvement loop** (`reflect.js`) — Every 6 hours, analyzes recent interactions, extracts behavioral lessons, and injects proven lessons into future prompts. Your bot genuinely gets smarter over time.
+- **Knowledge graph** — Automatically extracts entities (people, companies, products) and their relationships from every conversation. Ask "who do I do business with?" and get a real answer.
+- **Conversation replay** — Daily digests (generated at 11pm) permanently store what was discussed. Ask "what were we talking about last Tuesday?" — compaction can't erase it anymore.
+- **Passive learning** — Forward a message or share a link → your bot silently absorbs it (reacts with 👀) instead of trying to respond. Extracts entities, prices, dates, contacts.
+- **Conversation threading** — Every message gets a topic tag. When you return to an old topic, relevant context is pulled back in. Compaction produces per-topic summaries.
+- **Dynamic recipes** — Teach mode now supports `$input`, `$prev`, `$step[N]` variables. Output of one step feeds into the next.
+- **Voice responses** — Send a voice note, get a voice note back (edge-tts, free). Install: `pip install edge-tts`
+- **Agent delegation** — Spawn background research tasks that run independently and message you when done. Max 3 concurrent.
+- **Morning intelligence brief** — Morning check-in now includes: yesterday's digest, today's schedule, pending tasks, open threads, actionable signals.
+- **Notification batching** — Multiple proactive messages within 2 minutes combine into one.
+- **Cost dashboard** — `/costs` command shows today/week/month spend, cost by model, cost by route, 7-day trend.
+- **Trust levels** — 4 tiers (operator/staff/customer/guest) with per-level route access, tool filtering, and rate limits.
+
+### Performance
+- **Smart tool selection** — Pre-filters 80+ tools down to 10-20 per API call based on route + keywords. 70-90% token savings.
+- **Retry engine** — Tool failures include fallback hints ("Hint: try phone_screenshot as alternative"). AI decides whether to act.
+
+### New files
+- `tool-selector.js` — Smart tool pre-filtering
+- `reflect.js` — Self-improvement loop
+- `notification-queue.js` — Notification batching
+- `tts.js` — Text-to-speech (edge-tts + OpenAI TTS)
+- `agent-tasks.js` — Background task delegation
+
+### How to get this update
+```bash
+./update.sh
+# Optional: install voice replies
+pip install edge-tts
+```
+
+---
+
 ## [2026-03-23] — Smarter Conversations + Cost Visibility
 
 ### What's new
