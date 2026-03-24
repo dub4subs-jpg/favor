@@ -14,7 +14,8 @@ You need a **Linux server** (or DigitalOcean droplet) and an **OpenAI API key**.
 
 - Go to [digitalocean.com](https://www.digitalocean.com) and sign up
 - Click **Create** → **Droplets**
-- Choose **Ubuntu 22.04**, pick the **$6/mo** plan, click **Create Droplet**
+- Choose **Ubuntu 22.04**, pick the **$48/mo** plan (2 vCPU / 8GB RAM / 160GB disk)
+- This is the recommended spec — Favor runs browser automation, video processing, and multiple AI models. Smaller plans will struggle or limit features.
 - Once it's ready, click on it and hit the **Console** button (opens a terminal in your browser)
 
 ### 2. Run one command
@@ -59,7 +60,7 @@ That's it. Your bot is live.
 | Gemini API key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
 | Brave Search key | [brave.com/search/api](https://brave.com/search/api/) | Free tier available |
 | Claude Code subscription | [claude.ai](https://claude.ai) | **Highly recommended** — powers conversations, coding, and Build Mode |
-| DigitalOcean server | [digitalocean.com](https://www.digitalocean.com) | $6/mo |
+| DigitalOcean server | [digitalocean.com](https://www.digitalocean.com) | $48/mo (recommended — 2 vCPU / 8GB RAM) |
 
 Only OpenAI is required. Everything else is optional but recommended. **Claude Code CLI is strongly recommended** — without it, your bot uses GPT-4o for everything. With it, most conversations route through Claude (via your Max/Pro subscription) for much better, more natural responses at no extra API cost.
 

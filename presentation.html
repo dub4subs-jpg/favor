@@ -486,7 +486,7 @@
       </thead>
       <tbody>
         <tr><td>OpenAI API Key</td><td>~$5-20/mo (pay-per-use)</td><td><span class="badge required">Required</span></td></tr>
-        <tr><td>Server (DigitalOcean, AWS, any VPS)</td><td>$6/mo</td><td><span class="badge required">Required</span></td></tr>
+        <tr><td>Server (DigitalOcean, AWS, any VPS)</td><td>$48/mo</td><td><span class="badge required">Required</span></td></tr>
         <tr><td>Gemini API Key</td><td>Free</td><td><span class="badge free">Free</span></td></tr>
         <tr><td>Brave Search API Key</td><td>Free tier</td><td><span class="badge optional">Optional</span></td></tr>
         <tr><td>Claude Code (for Build Mode)</td><td>$20/mo</td><td><span class="badge optional">Optional</span></td></tr>
@@ -570,7 +570,7 @@
 <span class="comment"># shows QR code. On Mac, the bot runs in the</span>
 <span class="comment"># background via pm2 as long as your Mac is awake.</span>
 <span class="comment">#</span>
-<span class="comment"># Tip: For 24/7 uptime, deploy to a $6/mo VPS instead.</span></pre>
+<span class="comment"># Tip: For 24/7 uptime, deploy to a $48/mo VPS instead.</span></pre>
     </div>
 
     <div class="os-content" id="install-win">
@@ -585,7 +585,7 @@
 <span class="comment"># Same setup flow as Linux.</span>
 <span class="comment">#</span>
 <span class="comment"># Note: Bot stops if you close the WSL window.</span>
-<span class="comment"># For 24/7, deploy to a VPS ($6/mo DigitalOcean).</span></pre>
+<span class="comment"># For 24/7, deploy to a VPS ($48/mo DigitalOcean).</span></pre>
     </div>
   </div>
 
@@ -934,7 +934,7 @@
     <h2 class="animate">Linux Setup <span style="color:var(--orange); font-weight:400; font-size:0.6em;">detailed</span></h2>
     <div class="content animate">
       <pre><span class="comment"># 1. Create a DigitalOcean droplet (or any Ubuntu VPS)</span>
-<span class="comment">#    - Ubuntu 22.04, $6/mo plan (1GB RAM), any region</span>
+<span class="comment">#    - Ubuntu 22.04, $48/mo plan (2 vCPU / 8GB RAM), any region</span>
 <span class="comment">#    - Add your SSH key during creation (or use password)</span>
 
 <span class="comment"># 2. SSH in</span>
@@ -986,7 +986,7 @@
 <span class="comment"># IMPORTANT: Mac-specific notes</span>
 <span class="comment">#   - Bot runs as long as your Mac is awake</span>
 <span class="comment">#   - If your Mac sleeps, the bot goes offline</span>
-<span class="comment">#   - For 24/7 uptime: deploy to a $6/mo VPS instead</span>
+<span class="comment">#   - For 24/7 uptime: deploy to a $48/mo VPS instead</span>
 <span class="comment">#   - To prevent sleep: System Settings > Energy > Prevent sleep</span>
 <span class="comment">#   - Puppeteer (browser automation) may need:</span>
 <span class="cmd">brew install</span> chromium
@@ -1026,7 +1026,7 @@
 <span class="comment">#   - Bot stops when you close the Ubuntu/WSL window</span>
 <span class="comment">#   - To keep it running: leave the window open, or use:</span>
 <span class="cmd">wsl --shutdown</span>  <span class="comment"># DON'T do this (kills the bot)</span>
-<span class="comment">#   - For 24/7: deploy to a VPS ($6/mo DigitalOcean)</span>
+<span class="comment">#   - For 24/7: deploy to a VPS ($48/mo DigitalOcean)</span>
 <span class="comment">#   - If you get "permission denied" on setup.sh:</span>
 <span class="cmd">chmod +x</span> setup.sh && <span class="cmd">bash</span> setup.sh</pre>
     </div>
