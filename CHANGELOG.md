@@ -7,18 +7,11 @@ All notable updates to Favor. When you run `./update.sh`, you'll see what's new.
 ## [2026-03-24] v4.0.0 — Production Refinement
 
 ### What you can now do
-- **Add custom tools** — Drop a `.js` file in the `plugins/` folder and your bot learns a new skill automatically. No code changes needed.
-- **Safer browsing & email** — Your bot now filters suspicious content from web searches, emails, and websites before acting on it. No more getting tricked by sketchy pages.
-- **No more double replies** — If WhatsApp delivers the same message twice, your bot only responds once.
-- **Version updates** — Your bot now tells you what's new when it restarts after an update.
-- **Encrypted vault** — Your saved cards and personal info are now encrypted with a unique key per install.
-- **Run `npm test`** — 59 tests verify everything works. Good for peace of mind after customizing.
-
-### Under the hood
-- Codebase reorganized into `core/`, `utils/`, `plugins/` for easier maintenance
-- Shell commands hardened against injection
-- GitHub Actions CI runs tests on every push
-- Works without Claude CLI (falls back gracefully, tells you at startup)
+- **Smarter & safer** — Your bot is better at ignoring spam, scams, and sketchy content when browsing the web or reading emails for you.
+- **No more double replies** — Fixed an issue where the bot would sometimes respond to the same message twice.
+- **Update notifications** — After every update, your bot will message you with what's new (like this one).
+- **Secure vault** — Your saved cards and personal info are more securely encrypted.
+- **Plugins** — Developers can now extend your bot with custom skills.
 
 ---
 
