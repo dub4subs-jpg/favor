@@ -411,16 +411,22 @@ async function backfillEmbeddings() {
   const missing = db.getWithoutEmbeddings();
   if (!missing.length) return;
   console.log(`[MEMORY] Backfilling embeddings for ${missing.length} memories...`);
+  let count = 0;
   for (const row of missing) {
     try {
       const emb = await getEmbedding(row.content);
       db.updateEmbedding(row.id, emb);
-      await new Promise(r => setTimeout(r, 100)); // rate limit
+      count++;
+      await new Promise(r => setTimeout(r, 500)); // rate limit — avoid 429 bursts
     } catch (e) {
       console.warn('[MEMORY] Backfill failed for id', row.id, e.message);
+      if (e.message?.includes('429')) {
+        console.log('[MEMORY] Rate limited — pausing backfill, will retry next restart');
+        break;
+      }
     }
   }
-  console.log(`[MEMORY] Backfill complete.`);
+  console.log(`[MEMORY] Backfill complete: ${count}/${missing.length} embedded.`);
 }
 
 // ─── THREAD TRACKING (follow-up awareness) ───
@@ -1614,27 +1620,48 @@ ${pageContent}`;
 }
 
 // ─── SYSTEM PROMPT ───
+function scoreMemoryByRecency(mem) {
+  // Decay: recent memories score higher. Score 1.0 for today, decays to 0.3 over 90 days
+  const ageMs = Date.now() - new Date(mem.created_at).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  return Math.max(0.3, 1.0 - (ageDays / 90) * 0.7);
+}
+
+function rankMemories(memories, limit) {
+  // Score by recency, then sort and take top N
+  return memories
+    .map(m => ({ ...m, recencyScore: scoreMemoryByRecency(m) }))
+    .sort((a, b) => b.recencyScore - a.recencyScore)
+    .slice(0, limit);
+}
+
 function buildMemoryPrompt(relevantMemories = []) {
   const mem = db.getAllMemories();
   const parts = [];
 
-  // Static category memories (reduced limits since we now have auto-recall)
-  if (mem.facts.length) parts.push('*Facts:*\n' + mem.facts.slice(0, 15).map(f => `- ${f.content}`).join('\n'));
-  if (mem.decisions.length) parts.push('*Decisions:*\n' + mem.decisions.slice(0, 10).map(d => `- ${d.content}`).join('\n'));
-  if (mem.preferences.length) parts.push('*Preferences:*\n' + mem.preferences.slice(0, 10).map(p => `- ${p.content}`).join('\n'));
-  if (mem.tasks.length) parts.push('*Tasks:*\n' + mem.tasks.slice(0, 10).map(t => `- [${t.status || '?'}] ${t.content}`).join('\n'));
-  if (mem.workflows.length) parts.push('*Workflow Observations:*\n' + mem.workflows.slice(0, 8).map(w => `- ${w.content}`).join('\n'));
+  // Rank by recency instead of hard caps — more recent memories surface first
+  const facts = rankMemories(mem.facts, 25);
+  const decisions = rankMemories(mem.decisions, 15);
+  const preferences = rankMemories(mem.preferences, 20);
+  const tasks = mem.tasks.slice(0, 15); // tasks don't decay — show all active
+  const workflows = rankMemories(mem.workflows, 10);
 
-  // Auto-recalled relevant memories (the key improvement)
+  if (facts.length) parts.push('*Facts:*\n' + facts.map(f => `- ${f.content}`).join('\n'));
+  if (decisions.length) parts.push('*Decisions:*\n' + decisions.map(d => `- ${d.content}`).join('\n'));
+  if (preferences.length) parts.push('*Preferences:*\n' + preferences.map(p => `- ${p.content}`).join('\n'));
+  if (tasks.length) parts.push('*Tasks:*\n' + tasks.map(t => `- [${t.status || '?'}] ${t.content}`).join('\n'));
+  if (workflows.length) parts.push('*Workflow Observations:*\n' + workflows.map(w => `- ${w.content}`).join('\n'));
+
+  // Auto-recalled relevant memories (semantic match to current message)
   if (relevantMemories.length) {
     // Deduplicate against already-injected category memories
     const injected = new Set();
-    for (const cat of Object.values(mem)) {
-      for (const m of cat.slice(0, 15)) injected.add(m.id);
+    for (const cat of [facts, decisions, preferences, tasks, workflows]) {
+      for (const m of cat) injected.add(m.id);
     }
     const unique = relevantMemories.filter(r => !injected.has(r.id));
     if (unique.length) {
-      parts.push('*Relevant to this message:*\n' + unique.map(r =>
+      parts.push('*Relevant to this message:*\n' + unique.slice(0, 15).map(r =>
         `- [${r.category}] ${r.content} (relevance: ${(r.score * 100).toFixed(0)}%)`
       ).join('\n'));
     }
@@ -2121,6 +2148,19 @@ async function startWhatsApp() {
                 }
                 console.log(`[SELFCHECK] Complete: ${report.critical.length} critical, ${report.warnings.length} warnings, ${report.cleaned.length} cleanups`);
                 db.audit('selfcheck', `critical:${report.critical.length} warnings:${report.warnings.length} cleaned:${report.cleaned.length}`);
+
+                // Run memory consolidation after self-check
+                try {
+                  const { run: consolidate } = require('./memory-consolidate');
+                  const cStats = consolidate();
+                  const reduced = cStats.total_before - cStats.total_after;
+                  if (reduced > 0) {
+                    console.log(`[CONSOLIDATE] Cleaned ${reduced} memories (${cStats.total_before} -> ${cStats.total_after})`);
+                    await sock.sendMessage(opJid, { text: `*Memory Consolidation*\n${cStats.total_before} → ${cStats.total_after} memories\nRemoved: ${cStats.junk} junk, ${cStats.duplicates} duplicates, ${cStats.stale} stale` });
+                  }
+                } catch (ce) {
+                  console.warn('[CONSOLIDATE] Failed (non-fatal):', ce.message);
+                }
               } catch (e) {
                 console.error('[SELFCHECK] Failed:', e.message);
               }
@@ -3442,6 +3482,41 @@ Run the Bash command NOW.`;
     detectAndTrackThreads(jid, body || '', reply).catch(e =>
       console.warn('[THREADS] Detection failed (non-fatal):', e.message)
     );
+
+    // ─── AUTO FACT EXTRACTION — learn from every operator conversation (free via CLI) ───
+    if (isOperator(jid) && body && body.length > 20 && reply && reply !== '__SKIP__' && reply.length > 20) {
+      (async () => {
+        try {
+          const extractPrompt = `Extract 0-3 key facts worth remembering long-term from this conversation. Focus on: personal preferences, decisions made, new information about people/projects/plans, or anything the user would expect you to remember next time.
+
+Do NOT extract: greetings, small talk, questions without answers, things already obvious from context, or generic information.
+
+Return ONLY a JSON array of objects: [{"category":"fact|preference|decision","content":"concise fact"}]
+If nothing worth saving, return [].
+
+User said: ${(body || '').substring(0, 600)}
+Bot replied: ${reply.substring(0, 600)}`;
+          const raw = await runClaudeCLI(extractPrompt, 15000, { model: 'haiku' });
+          if (!raw) return;
+          const cleaned = raw.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+          const extracted = JSON.parse(cleaned);
+          if (!Array.isArray(extracted)) return;
+          for (const item of extracted.slice(0, 3)) {
+            if (!item.content || item.content.length < 10) continue;
+            const category = ['fact', 'preference', 'decision'].includes(item.category) ? item.category : 'fact';
+            // Dedup: check if similar content exists
+            const existing = db.db.prepare(
+              'SELECT id FROM memories WHERE category = ? AND content LIKE ? LIMIT 1'
+            ).get(category, `%${item.content.substring(0, 50)}%`);
+            if (!existing) {
+              const memId = db.save(category, item.content, 'auto-extracted');
+              getEmbedding(item.content).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+              console.log(`[MEMORY] Auto-extracted: [${category}] ${item.content.substring(0, 80)}`);
+            }
+          }
+        } catch (_) { /* non-fatal */ }
+      })();
+    }
 
     // ─── PER-CONTACT MEMORY — auto-save key facts about non-operator contacts ───
     if (!isOperator(jid) && reply && reply !== '__SKIP__' && body && body.length > 10) {
