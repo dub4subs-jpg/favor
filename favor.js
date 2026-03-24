@@ -20,6 +20,7 @@ const Guardian = require('./guardian');
 const SelfCheck = require('./selfcheck');
 const AliveEngine = require('./alive/');
 const syncBot = require('./sync');
+const memoryBridge = require('./memory-bridge');
 const pino = require('pino');
 
 const logger = pino({ level: 'silent' }); // suppress baileys noise
@@ -233,6 +234,7 @@ if (fs.existsSync(legacyMemory) && db.getMemoryCount().facts === 0) {
 
 // ─── MEMORY SYNC BOT ───
 syncBot.init();
+memoryBridge.init(db);
 
 // ─── COMPACTOR ───
 const compactor = new Compactor(db, {
