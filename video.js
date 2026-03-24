@@ -168,11 +168,11 @@ class VideoProcessor {
     }
 
     try {
-      const transcript = await this.openai.audio.transcriptions.create({
-        model: 'whisper-1',
-        file: fs.createReadStream(audioPath),
-        response_format: 'text'
-      });
+      const { execSync } = require('child_process');
+      const transcript = execSync(
+        `python3 ${require('path').join(__dirname, 'transcribe.py')} "${audioPath}"`,
+        { timeout: 120000, encoding: 'utf8', maxBuffer: 1024 * 1024 }
+      ).trim();
       return { ok: true, text: transcript };
     } catch (e) {
       return { ok: false, error: 'Transcription failed: ' + e.message };
