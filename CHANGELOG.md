@@ -6,29 +6,19 @@ All notable updates to Favor. When you run `./update.sh`, you'll see what's new.
 
 ## [2026-03-24] v4.0.0 — Production Refinement
 
-Framework-wide refactoring for production readiness. Security hardened, modularized, tested, and ready for real testers.
+### What you can now do
+- **Add custom tools** — Drop a `.js` file in the `plugins/` folder and your bot learns a new skill automatically. No code changes needed.
+- **Safer browsing & email** — Your bot now filters suspicious content from web searches, emails, and websites before acting on it. No more getting tricked by sketchy pages.
+- **No more double replies** — If WhatsApp delivers the same message twice, your bot only responds once.
+- **Version updates** — Your bot now tells you what's new when it restarts after an update.
+- **Encrypted vault** — Your saved cards and personal info are now encrypted with a unique key per install.
+- **Run `npm test`** — 59 tests verify everything works. Good for peace of mind after customizing.
 
-### Architecture
-- **Monolith split** — Extracted `core/tool-definitions.js`, `core/prompts.js`, `core/plugin-loader.js` from 3,827-line `favor.js` (now ~3,500 lines)
-- **Plugin system** — Drop `.js` files in `plugins/` to add new tools. Auto-registers with tool-selector and dispatcher. See `plugins/example-plugin.js` for the contract.
-- **Shared utilities** — `utils/claude.js` (CLI detection, replaces 4 duplicate implementations), `utils/shell.js` (safe command execution), `utils/sanitize.js` (centralized prompt injection defense), `utils/result.js` (standard return format)
-- **Database schema versioning** — Migrations tracked in `schema_version` table. No more silent ALTER failures.
-
-### Security
-- **Shell injection fixed** — All PowerShell commands use `-EncodedCommand` (base64). All SSH uses `execFile` with argument arrays. No user input ever touches shell interpolation.
-- **Prompt injection defense expanded** — `sanitizeExternalInput()` now applied to web search results, email content, video transcripts — not just browser output. 15+ injection patterns filtered.
-- **Vault salt randomized** — Each instance generates a unique 32-byte salt (stored in `vault_meta` table). Previously all instances shared the same hardcoded salt.
-- **Message deduplication** — 5-second dedup window prevents WhatsApp double-send from processing messages twice.
-
-### Quality
-- **59 tests** — Jest test suite covering vault encryption, prompt building, tool definitions, plugin loader, sanitization, shell safety. `npm test` runs all.
-- **CI/CD** — GitHub Actions workflow tests on Node 18/20/22 on every push and PR.
-- **Dead dependencies removed** — `whatsapp-web.js` and `@anthropic-ai/sdk` removed (200MB+ saved).
-
-### Developer Experience
-- **package.json** — Description, author, repo, keywords, engines, license, `npm start` script. Version bumped to 4.0.0.
-- **jsconfig.json** — IDE support with path aliases.
-- **Graceful degradation** — Clear startup warning when Claude CLI is missing, with affected route list.
+### Under the hood
+- Codebase reorganized into `core/`, `utils/`, `plugins/` for easier maintenance
+- Shell commands hardened against injection
+- GitHub Actions CI runs tests on every push
+- Works without Claude CLI (falls back gracefully, tells you at startup)
 
 ---
 

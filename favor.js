@@ -270,11 +270,13 @@ const compactor = new Compactor(db, {
 });
 
 // ─── VERSION-AWARE STARTUP MESSAGE ───
-// On first boot after an update, tell the operator what's new
+// On first boot after an update, tell the operator what changed in plain language.
+// On normal restarts, just confirm online status with the tagline.
 function getStartupMessage() {
   const pkg = require('./package.json');
   const version = pkg.version;
   const name = config.identity?.name || 'Favor';
+  const tagline = config.identity?.tagline || 'Always in your favor.';
 
   // Check last known version from DB
   let lastVersion = null;
@@ -286,39 +288,42 @@ function getStartupMessage() {
   // Save current version
   try { db.audit('version', version); } catch {}
 
-  // If same version, just say online
+  // Same version — just confirm online with tagline
   if (lastVersion === version) {
-    return `${name} is online. (v${version})`;
+    return `${name} is online. _${tagline}_`;
   }
 
-  // New version — read CHANGELOG.md for the latest entry
-  let changelog = '';
+  // New version — read the "What you can do now" section from CHANGELOG.md
+  let whatsNew = '';
   try {
     const raw = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
-    // Extract the first ## section (latest version)
-    const match = raw.match(/^## .+?\n([\s\S]*?)(?=\n## |\n---|\Z)/m);
-    if (match) {
-      // Clean up: take first ~800 chars, strip markdown formatting for WhatsApp
-      changelog = match[1]
-        .replace(/^### /gm, '*')           // ### Header → *Header
-        .replace(/\*\*([^*]+)\*\*/g, '*$1*') // **bold** → *bold*
-        .replace(/^- /gm, '• ')            // - bullet → • bullet
-        .trim()
-        .substring(0, 800);
-      if (match[1].trim().length > 800) changelog += '\n...';
+    // Look for a "What's new" / "You can now" section first, fall back to first ## block
+    const userSection = raw.match(/^### What you can now do\n([\s\S]*?)(?=\n### |\n## |\n---)/m);
+    if (userSection) {
+      whatsNew = userSection[1].trim();
+    } else {
+      // Fall back: grab first ## section, but only bullet points (skip headers/technical detail)
+      const match = raw.match(/^## .+?\n([\s\S]*?)(?=\n## |\n---)/m);
+      if (match) {
+        whatsNew = match[1]
+          .split('\n')
+          .filter(line => line.startsWith('- ') || line.startsWith('* '))
+          .map(line => line.replace(/^[-*] /, '• ').replace(/\*\*([^*]+)\*\*/g, '*$1*'))
+          .join('\n')
+          .substring(0, 600);
+      }
     }
   } catch {}
 
-  if (changelog) {
-    const prefix = lastVersion
-      ? `${name} updated: v${lastVersion} → v${version}`
-      : `${name} is online! v${version}`;
-    return `${prefix}\n\n${changelog}`;
+  const header = lastVersion
+    ? `${name} updated to v${version}`
+    : `${name} is online! v${version}`;
+
+  if (whatsNew) {
+    return `${header}\n\n${whatsNew}\n\n_${tagline}_`;
   }
 
-  return lastVersion
-    ? `${name} updated to v${version}. Check CHANGELOG.md for details.`
-    : `${name} is online. (v${version})`;
+  return `${header}\n\n_${tagline}_`;
 }
 
 // ─── KNOWLEDGE BASE ───
