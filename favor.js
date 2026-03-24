@@ -234,7 +234,7 @@ if (fs.existsSync(legacyMemory) && db.getMemoryCount().facts === 0) {
 
 // ─── MEMORY SYNC BOT ───
 syncBot.init();
-memoryBridge.init(db);
+memoryBridge.init(db, getEmbedding);
 
 // ─── COMPACTOR ───
 const compactor = new Compactor(db, {
