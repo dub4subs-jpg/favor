@@ -1881,6 +1881,25 @@ async function startWhatsApp() {
       if (creds.me?.lid && creds.me?.id) {
         registerLidMapping(creds.me.lid, creds.me.id);
       }
+      // ─── AUTO-RESOLVE OPERATOR LID ───
+      // Baileys now sends messages as LID JIDs — look up the operator's LID
+      // so isOperator() works even when messages arrive as @lid instead of @s.whatsapp.net
+      const opNum = (config.whatsapp?.operatorNumber || '').replace('+', '');
+      if (opNum && sock.onWhatsApp) {
+        try {
+          const [result] = await sock.onWhatsApp(opNum + '@s.whatsapp.net');
+          if (result?.jid) {
+            // result.jid may be phone JID or LID — register the mapping either way
+            const phoneJid = opNum + '@s.whatsapp.net';
+            if (result.jid !== phoneJid) {
+              registerLidMapping(result.jid, phoneJid);
+              console.log(`[FAVOR] Operator LID resolved: ${opNum} <-> ${result.jid}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[FAVOR] Could not resolve operator LID: ${e.message}`);
+        }
+      }
       const counts = db.getMemoryCount();
       const cronCount = db.getActiveCrons().length;
       console.log(`[FAVOR] ${config.identity.name} is online (Baileys)`);
@@ -2029,9 +2048,12 @@ async function startWhatsApp() {
 
     for (const msg of msgs) {
       try {
-        // Learn LID mappings from message participant metadata
-        if (msg.key?.participant) {
-          // In groups, participant has the sender info
+        // Learn LID mappings from message metadata
+        // Baileys may include both LID and phone JID in different message fields
+        if (msg.key?.remoteJid?.endsWith('@lid') && msg.key?.participant && !msg.key.participant.endsWith('@lid')) {
+          registerLidMapping(msg.key.remoteJid, msg.key.participant);
+        } else if (msg.key?.participant?.endsWith('@lid') && msg.key?.remoteJid && !msg.key.remoteJid.endsWith('@lid')) {
+          registerLidMapping(msg.key.participant, msg.key.remoteJid);
         }
         await handleMessage(msg);
       } catch (err) {
@@ -2435,6 +2457,21 @@ async function handleMessage(msg) {
   const platformConfig = PLATFORM === 'telegram' ? (config.telegram || {}) : config.whatsapp;
   if (isGroup(jid) && !platformConfig.allowGroups) return;
   if (!isAllowed(jid)) return;
+
+  // ─── LID RESOLUTION: resolve unknown LID JIDs on the fly ───
+  // If message comes from a LID we haven't mapped yet, try to resolve it via onWhatsApp lookup
+  if (jid.endsWith('@lid') && !resolvePhone(jid) && sock.onWhatsApp) {
+    try {
+      // Look up the LID to find the associated phone number
+      const [result] = await sock.onWhatsApp(jid);
+      if (result?.jid && result.jid !== jid) {
+        registerLidMapping(jid, result.jid);
+        console.log(`[LID] Auto-resolved: ${jid} <-> ${result.jid}`);
+      }
+    } catch (e) {
+      // Non-fatal — operator check will just fail gracefully
+    }
+  }
 
   // ─── GUARDIAN RATE LIMIT CHECK ───
   const guardCheck = guardian.checkRequest(jid, config.model.id, 'incoming');
