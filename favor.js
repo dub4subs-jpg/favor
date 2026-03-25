@@ -3465,6 +3465,35 @@ Bot replied: ${reply.substring(0, 600)}`;
       // Scribe fallback: operator messages too short for fact extraction (media, short texts)
       const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
       scribe.capture(jid, fallback);
+
+      // Even for short messages, check if any pending/task items got resolved
+      const pendingItems = scribe.getTodayJournal(jid).filter(e => ['pending', 'task'].includes(e.category));
+      if (pendingItems.length && body && body.length > 2) {
+        (async () => {
+          try {
+            const items = pendingItems.map(e => `#${e.id}: ${e.summary}`).join('\n');
+            const resolvePrompt = `Given this short message and bot reply, which open items (if any) are now resolved? Return ONLY a JSON array of resolved entry IDs, e.g. [6] or []. Return [] if none resolved.
+
+User said: ${(body || '').substring(0, 200)}
+Bot replied: ${reply.substring(0, 200)}
+
+Open items:
+${items}`;
+            const raw = await runClaudeCLI(resolvePrompt, 10000, { model: 'haiku' });
+            if (!raw) return;
+            const cleaned = raw.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+            const ids = JSON.parse(cleaned);
+            if (Array.isArray(ids)) {
+              for (const id of ids) {
+                if (typeof id === 'number' && id > 0) {
+                  scribe.resolve(id);
+                  console.log(`[SCRIBE] Auto-resolved entry #${id}`);
+                }
+              }
+            }
+          } catch (_) { /* non-fatal */ }
+        })();
+      }
     }
 
     // ─── PER-CONTACT MEMORY + SCRIBE — auto-save key facts about non-operator contacts ───
