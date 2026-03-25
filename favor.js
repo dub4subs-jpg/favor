@@ -354,10 +354,24 @@ function getStartupMessage() {
 }
 
 // ─── KNOWLEDGE BASE ───
+function getKnowledgeFiles() {
+  const dir = path.resolve(__dirname, config.knowledge.dir);
+  if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); return []; }
+  const manifestPath = path.join(dir, 'knowledge.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      return (manifest.files || []).filter(f => fs.existsSync(path.join(dir, f)));
+    } catch (e) { console.warn('[KNOWLEDGE] Bad manifest, falling back to dir scan'); }
+  }
+  return fs.readdirSync(dir).filter(f =>
+    (f.endsWith('.txt') || f.endsWith('.md')) && !f.includes('.example.')
+  );
+}
+
 function loadKnowledge() {
   const dir = path.resolve(__dirname, config.knowledge.dir);
-  if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); return ''; }
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.txt') || f.endsWith('.md'));
+  const files = getKnowledgeFiles();
   if (!files.length) return '';
   let k = '\n\n=== YOUR KNOWLEDGE BASE (MANDATORY — these define who you are, how you behave, and what you can do. Follow ALL rules and instructions below.) ===\n';
   for (const file of files) {
@@ -376,7 +390,7 @@ var knowledgeFileEmbeddings = {}; // { filename: embedding }
 function loadKnowledgeFiles() {
   const dir = path.resolve(__dirname, config.knowledge.dir);
   if (!fs.existsSync(dir)) return {};
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.txt') || f.endsWith('.md'));
+  const files = getKnowledgeFiles();
   const contents = {};
   for (const file of files) {
     contents[file] = fs.readFileSync(path.join(dir, file), 'utf8');
