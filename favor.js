@@ -21,6 +21,7 @@ const SelfCheck = require('./selfcheck');
 const AliveEngine = require('./alive/');
 const syncBot = require('./sync');
 const memoryBridge = require('./memory-bridge');
+const localEmbeddings = require('./embeddings');
 const pino = require('pino');
 
 const logger = pino({ level: 'silent' }); // suppress baileys noise
@@ -262,6 +263,7 @@ if (fs.existsSync(legacyMemory) && db.getMemoryCount().facts === 0) {
 
 // ─── MEMORY SYNC BOT ───
 syncBot.init();
+localEmbeddings.warmup(); // pre-load embedding model (downloads ~80MB on first run)
 memoryBridge.init(db, getEmbedding);
 
 // ─── COMPACTOR ───
@@ -385,10 +387,6 @@ function loadKnowledgeFiles() {
 }
 
 async function embedKnowledgeFiles() {
-  if (!openai) {
-    console.log('[KNOWLEDGE] Skipping embeddings — no OpenAI client (using keyword matching instead)');
-    return;
-  }
   for (const [file, content] of Object.entries(knowledgeFileContents)) {
     if (knowledgeFileEmbeddings[file]) continue;
     try {
@@ -459,9 +457,8 @@ fs.watch(path.resolve(__dirname, config.knowledge.dir), { persistent: false }, (
 
 // ─── SEMANTIC MEMORY ───
 async function getEmbedding(text) {
-  if (!openai) return null; // no OpenAI client — keyword search will be used as fallback
-  const res = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text.slice(0, 512) });
-  return res.data[0].embedding;
+  // Local embeddings (all-MiniLM-L6-v2) — no API key needed
+  return localEmbeddings.getEmbedding(text);
 }
 
 async function semanticSearch(query) {
@@ -519,7 +516,6 @@ async function autoRecallMemories(messageText) {
 }
 
 async function backfillEmbeddings() {
-  if (!openai) return; // skip when running on Claude CLI only
   const missing = db.getWithoutEmbeddings();
   if (!missing.length) return;
   console.log(`[MEMORY] Backfilling embeddings for ${missing.length} memories...`);
@@ -529,13 +525,9 @@ async function backfillEmbeddings() {
       const emb = await getEmbedding(row.content);
       db.updateEmbedding(row.id, emb);
       count++;
-      await new Promise(r => setTimeout(r, 500)); // rate limit — avoid 429 bursts
     } catch (e) {
       console.warn('[MEMORY] Backfill failed for id', row.id, e.message);
-      if (e.message?.includes('429')) {
-        console.log('[MEMORY] Rate limited — pausing backfill, will retry next restart');
-        break;
-      }
+      break;
     }
   }
   console.log(`[MEMORY] Backfill complete: ${count}/${missing.length} embedded.`);

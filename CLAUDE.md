@@ -80,8 +80,9 @@ Router uses Claude CLI for classification (free), keyword overrides for obvious 
 - **Tool loop** — GPT-4o function calling (tools: getToolsForRole). This is the ONLY major paid usage.
 - **Whisper** — Audio transcription (voice notes, video audio)
 - **TTS** — Text-to-speech for voice replies
-- **Embeddings** — Semantic memory search (text-embedding-3-small)
 - **Fallback** — If Claude CLI is unavailable, some routes fall back to GPT-4o
+
+**Note:** Embeddings now run locally via `all-MiniLM-L6-v2` (384-dim, ~80MB model, no API key needed). See `embeddings.js`.
 
 ### What uses Claude CLI (free)?
 - Request classification (router)

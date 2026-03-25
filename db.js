@@ -135,6 +135,21 @@ class FavorMemory {
           );
         `);
       },
+      // v5: Clear OpenAI embeddings (1536-dim) — local model uses 384-dim
+      () => {
+        const sample = this.db.prepare("SELECT embedding FROM memories WHERE embedding IS NOT NULL LIMIT 1").get();
+        if (sample) {
+          try {
+            const emb = JSON.parse(sample.embedding);
+            if (emb.length !== 384) {
+              const count = this.db.prepare("UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL").run().changes;
+              console.log(`[DB] Cleared ${count} old embeddings (wrong dimensions) — will regenerate with local model`);
+            }
+          } catch (_) {
+            this.db.exec("UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL");
+          }
+        }
+      },
     ];
 
     // Apply only new migrations
