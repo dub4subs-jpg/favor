@@ -2786,7 +2786,7 @@ async function handleMessage(msg) {
         userContent.push({ type: 'text', text: body || '(sent an image that could not be processed)' });
       }
     } else if (isVideo) {
-      await sock.sendMessage(jid, { text: 'Processing your video...' });
+      await sock.sendMessage(jid, { text: 'Processing your video — ETA ~30-90s' });
       const videoResult = await processVideoMessage(msg);
       if (videoResult && !videoResult.error) {
         const videoSummary = `[Video message — ${videoResult.duration}s, ${videoResult.frameCount} frames]\n\n**Summary:** ${videoResult.summary}${videoResult.transcript ? '\n\n**Transcript:** ' + videoResult.transcript.substring(0, 1500) : ''}`;
@@ -2934,11 +2934,32 @@ async function handleMessage(msg) {
       decision.route = 'chat';
     }
 
+    // ─── TASK ACKNOWLEDGMENT + ETA ───
+    const ROUTE_ETA = {
+      tool:    { eta: '~10-30s',  ack: 'Running that now' },
+      hybrid:  { eta: '~15-45s',  ack: 'On it' },
+      full:    { eta: '~30-60s',  ack: 'Working on it' },
+      claude:  { eta: '~30-90s',  ack: 'Firing up the engineer' },
+      gemini:  { eta: '~20-45s',  ack: 'Sending to the analyst' },
+      kimi:    { eta: '~15-30s',  ack: 'Putting the worker swarm on it' },
+      agent:   { eta: '~1-3 min', ack: 'Spinning up a background task' },
+      memory:  { eta: '~10-20s',  ack: 'Checking my memory' },
+    };
+    const etaInfo = ROUTE_ETA[decision.route];
+    if (etaInfo) {
+      try {
+        await sock.sendMessage(jid, { text: `${etaInfo.ack} — ETA ${etaInfo.eta}` });
+      } catch (_) {}
+    }
+
     let reply = '';
     let modelUsed = config.model.id;
     const toolsUsed = [];
 
     // ─── ROUTE: image — Claude CLI with vision (free via Max subscription) ───
+    if (!reply && isImage && !etaInfo) {
+      try { await sock.sendMessage(jid, { text: 'Analyzing that image — ETA ~15-30s' }); } catch (_) {}
+    }
     if (!reply && isImage) {
       let imgPath = null;
       try {
