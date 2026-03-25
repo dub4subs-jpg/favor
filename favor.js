@@ -3391,14 +3391,23 @@ Run the Bash command NOW.`;
     if (isOperator(jid) && body && body.length > 20 && reply && reply !== '__SKIP__' && reply.length > 20) {
       (async () => {
         try {
+          // Get active pending/task entries for auto-resolution
+          const activeEntries = scribe.getTodayJournal(jid)
+            .filter(e => ['pending', 'task'].includes(e.category))
+            .map(e => `#${e.id}: ${e.summary}`)
+            .join('\n');
+          const resolveSection = activeEntries
+            ? `\n- resolved: array of entry IDs (numbers) from the open items below that this exchange resolves/answers. Return [] if none resolved.\n\nOpen items:\n${activeEntries}`
+            : '';
+
           const extractPrompt = `Extract key information from this conversation. Return ONLY valid JSON:
-{"facts":[{"category":"fact|preference|decision","content":"concise fact"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"}
+{"facts":[{"category":"fact|preference|decision","content":"concise fact"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"${activeEntries ? ',"resolved":[1,2]' : ''}}
 
 Rules:
 - facts: 0-3 key facts worth remembering (preferences, decisions, plans). Skip greetings/small talk.
 - journal: ALWAYS provide a 1-line summary (max 150 chars) of what this exchange was about. Include specific names, numbers, prices, file paths if mentioned.
 - journal_category: "decision" if a choice was made, "task" if work was requested, "pending" if a question is unanswered, otherwise "exchange"
-- If nothing worth saving for facts, return empty array but STILL provide journal.
+- If nothing worth saving for facts, return empty array but STILL provide journal.${resolveSection}
 
 User said: ${(body || '').substring(0, 600)}
 Bot replied: ${reply.substring(0, 600)}`;
@@ -3424,6 +3433,16 @@ Bot replied: ${reply.substring(0, 600)}`;
           } else {
             const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
             scribe.capture(jid, fallback);
+          }
+
+          // ─── SCRIBE: Auto-resolve completed items ───
+          if (Array.isArray(parsed.resolved)) {
+            for (const id of parsed.resolved) {
+              if (typeof id === 'number' && id > 0) {
+                scribe.resolve(id);
+                console.log(`[SCRIBE] Auto-resolved entry #${id}`);
+              }
+            }
           }
 
           // Backward-compatible: if array (old format), treat as facts
