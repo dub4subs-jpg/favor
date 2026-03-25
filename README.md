@@ -8,7 +8,7 @@ Favor gives you a personal AI assistant with memory, multi-model routing, browse
 
 ## Setup (5 minutes)
 
-You need a **Linux server** (or DigitalOcean droplet) and an **OpenAI API key**.
+You need a **Linux server** (or DigitalOcean droplet), an **OpenAI API key**, and a **Claude Pro or Max subscription**.
 
 ### 1. Create a server
 
@@ -28,8 +28,10 @@ git clone https://github.com/dub4subs-jpg/favor.git && cd favor && bash setup.sh
 
 The setup script will:
 - Ask if you want **Telegram** (recommended) or **WhatsApp**
-- Install everything automatically (Node.js, pm2, dependencies)
+- Install everything automatically (Node.js, pm2, tmux, ffmpeg, Chromium, yt-dlp, faster-whisper, edge-tts, and all npm dependencies)
+- Install Claude Code CLI and prompt you to log in
 - Ask you a few questions (bot name, API keys, etc.)
+- Optionally set up Gmail (for email features)
 - Create your config
 - **Telegram:** Start your bot — message it on Telegram, done
 - **WhatsApp:** Show a QR code — scan it with WhatsApp
@@ -56,13 +58,14 @@ That's it. Your bot is live.
 
 | What | Where to get it | Cost |
 |------|----------------|------|
-| OpenAI API key | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Pay-per-use (~$5-20/mo) |
-| Gemini API key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
-| Brave Search key | [brave.com/search/api](https://brave.com/search/api/) | Free tier available |
-| Claude Code subscription | [claude.ai](https://claude.ai) | **Highly recommended** — powers conversations, coding, and Build Mode |
 | DigitalOcean server | [digitalocean.com](https://www.digitalocean.com) | $48/mo recommended, $12/mo minimum |
+| Claude Code subscription | [claude.ai](https://claude.ai) | **Required** — Pro ($20/mo) or Max ($100/mo) |
+| OpenAI API key | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Pay-per-use (~$5-20/mo) |
+| Gemini API key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free (optional) |
+| Brave Search key | [brave.com/search/api](https://brave.com/search/api/) | Free tier (optional) |
+| Gmail OAuth credentials | [console.cloud.google.com](https://console.cloud.google.com/apis/credentials) | Free (optional, for email features) |
 
-Only OpenAI is required. Everything else is optional but recommended. **Claude Code CLI is strongly recommended** — without it, your bot uses GPT-4o for everything. With it, most conversations route through Claude (via your Max/Pro subscription) for much better, more natural responses at no extra API cost.
+**Claude Code** and **OpenAI** are both required. The setup script installs everything else automatically — Node.js, pm2, tmux, ffmpeg, Chromium, yt-dlp, faster-whisper, edge-tts, and all npm dependencies. You just need the server and API keys.
 
 ---
 
@@ -109,19 +112,17 @@ Configure in `config.json`:
 - **Auto-save findings** — Research results from web searches and Gemini analysis are automatically saved to memory
 - **UI/UX design system** — Generate color palettes, typography, and layout recommendations
 
-### Claude Code CLI (Recommended)
+### Claude Code CLI (Required)
 
-Claude Code CLI is the secret weapon that makes Favor feel like a real companion, not just a chatbot. When installed, **most of your conversations route through Claude** instead of GPT-4o — including casual chat, Q&A, engineering tasks, mini responses, and even image analysis. This runs on your Claude subscription (Pro $20/mo or Max $100/mo), so there's **no extra per-message API cost**.
+Claude Code CLI is the brain that makes Favor feel like a real companion, not just a chatbot. **Most of your conversations route through Claude** instead of GPT-4o — including casual chat, Q&A, engineering tasks, mini responses, and even image analysis. This runs on your Claude subscription (Pro $20/mo or Max $100/mo), so there's **no extra per-message API cost**.
 
-Without Claude CLI, everything falls back to GPT-4o (pay-per-use). With it, you get better conversations for a flat monthly fee.
+It also powers Build Mode (software building from chat) and Remote Code Sessions (code on your server from your phone).
 
-**Install it:**
+**The setup script installs it automatically.** You just need to log in when prompted. If you need to install manually:
 ```bash
 curl -fsSL https://claude.ai/install.sh | sh
 claude login
 ```
-
-The setup script (`bash setup.sh`) also offers to install it for you. If you skip it during setup, you can always install later — the bot will automatically detect it on next restart.
 
 **Memory Bridge:** If you also use Claude Code interactively on your server (e.g. `claude` in the terminal for coding or research), your bot automatically learns from those sessions. Claude Code saves memories to `~/.claude/` — the Memory Bridge scans those files every 2 minutes and imports them into your bot's brain. This means your bot and Claude Code share the same understanding of who you are, your preferences, and your projects. The more you use Claude Code, the smarter your bot gets.
 
@@ -136,6 +137,18 @@ Tell your bot to build software and it shells out to **Claude Code CLI** to do t
 Say things like *"build me a todo app with React"* or *"build a price tracker"* — your bot plans it, builds it, commits it.
 
 > Requires a Claude Code subscription (Pro or Max plan). Install Claude Code CLI on your server first.
+
+### Remote Code Sessions
+Message your bot **"start remote"** and it spins up a Claude Code session on your server, then sends you a clickable link. Open the link on your phone — you're now coding on your server from anywhere, no SSH client needed.
+
+- Say *"start remote"*, *"remote session"*, *"code from phone"*, or *"start coding"*
+- Session runs in **tmux** (survives disconnects — you can close the browser and come back)
+- Opens in the directory of your choice (defaults to `/root`)
+
+**Requirements:**
+- **Claude Code CLI** installed on your server (`curl -fsSL https://claude.ai/install.sh | sh`)
+- **Claude Pro** ($20/mo) or **Max** ($100/mo) subscription
+- **tmux** (`apt install tmux` — installed automatically by `setup.sh`)
 
 ### Guardian
 

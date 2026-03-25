@@ -254,7 +254,18 @@ function getClaudeTip() {
   return '\n\n💡 *Tip:* Install Claude Code CLI for much better conversations. Run `curl -fsSL https://claude.ai/install.sh | sh` on your server, then `claude login`. Requires a Claude Pro ($20/mo) or Max ($100/mo) subscription.';
 }
 
-// ─── CLAUDE CLI EXECUTOR ───
+// ─── CLAUDE CLI EXECUTOR (with concurrency limit + partial output recovery) ───
+const CLI_MAX_CONCURRENT = 2;
+let _cliRunning = 0;
+const _cliQueue = [];
+
+function _drainQueue() {
+  while (_cliQueue.length > 0 && _cliRunning < CLI_MAX_CONCURRENT) {
+    const next = _cliQueue.shift();
+    next();
+  }
+}
+
 function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model } = {}) {
   if (!CLAUDE_AVAILABLE) {
     return Promise.reject(new Error('Claude Code CLI not installed'));
@@ -262,27 +273,50 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
   // Use spawn + stdin for long prompts (avoids arg length limits)
   // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
   // model: optional model override (e.g. 'haiku' for fast/cheap tasks)
-  const args = ['--print'];
-  if (model) args.push('--model', model);
-  if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');
-  args.push('-');
   return new Promise((resolve, reject) => {
-    const proc = spawn(CLAUDE_BIN, args, {
-      timeout: timeoutMs,
-      env: claudeEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '', stderr = '';
-    proc.stdout.on('data', d => stdout += d);
-    proc.stderr.on('data', d => stderr += d);
-    proc.on('close', (code) => {
-      const out = stdout.trim() || stderr.trim() || '(no output)';
-      if (code !== 0 && !stdout.trim()) reject(new Error(stderr.trim() || `exit code ${code}`));
-      else resolve(out.substring(0, 1024 * 1024 * 4));
-    });
-    proc.on('error', reject);
-    proc.stdin.write(prompt);
-    proc.stdin.end();
+    const run = () => {
+      _cliRunning++;
+      const args = ['--print'];
+      if (model) args.push('--model', model);
+      if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');
+      args.push('-');
+      const proc = spawn(CLAUDE_BIN, args, {
+        timeout: timeoutMs,
+        env: claudeEnv(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '', stderr = '';
+      proc.stdout.on('data', d => stdout += d);
+      proc.stderr.on('data', d => stderr += d);
+      proc.on('close', (code) => {
+        _cliRunning--;
+        _drainQueue();
+        const out = stdout.trim() || stderr.trim() || '(no output)';
+        // If timed out (143=SIGTERM) but we got partial output, use it
+        if (code !== 0 && stdout.trim()) {
+          console.warn(`[ROUTER] Claude CLI exited ${code} but had partial output (${stdout.trim().length} chars) — using it`);
+          resolve(stdout.trim().substring(0, 1024 * 1024 * 4));
+        } else if (code !== 0) {
+          reject(new Error(stderr.trim() || `exit code ${code}`));
+        } else {
+          resolve(out.substring(0, 1024 * 1024 * 4));
+        }
+      });
+      proc.on('error', (err) => {
+        _cliRunning--;
+        _drainQueue();
+        reject(err);
+      });
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    };
+
+    if (_cliRunning >= CLI_MAX_CONCURRENT) {
+      console.log(`[ROUTER] Claude CLI queued (${_cliQueue.length + 1} waiting, ${_cliRunning} running)`);
+      _cliQueue.push(run);
+    } else {
+      run();
+    }
   });
 }
 

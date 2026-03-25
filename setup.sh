@@ -68,21 +68,62 @@ else
     ISSUES+=("build_missing")
 fi
 
+# ─── curl ───
+if command -v curl &> /dev/null; then
+    echo "  [✓] curl"
+else
+    echo "  [ ] curl — not installed"
+    ISSUES+=("curl_missing")
+fi
+
+# ─── pip3 ───
+if command -v pip3 &> /dev/null; then
+    echo "  [✓] pip3"
+else
+    echo "  [ ] pip3 — not installed"
+    ISSUES+=("pip3_missing")
+fi
+
 # ─── Media tools ───
 if command -v yt-dlp &> /dev/null; then
     echo "  [✓] yt-dlp $(yt-dlp --version 2>/dev/null)"
 else
-    echo "  [ ] yt-dlp — not installed (optional, for video features)"
+    echo "  [ ] yt-dlp — not installed"
+    ISSUES+=("ytdlp_missing")
 fi
 if command -v ffmpeg &> /dev/null; then
     echo "  [✓] ffmpeg"
 else
-    echo "  [ ] ffmpeg — not installed (optional, for video features)"
+    echo "  [ ] ffmpeg — not installed"
+    ISSUES+=("ffmpeg_missing")
 fi
 if command -v chromium-browser &> /dev/null || command -v chromium &> /dev/null; then
     echo "  [✓] Chromium"
 else
-    echo "  [ ] Chromium — not installed (optional, for browser features)"
+    echo "  [ ] Chromium — not installed"
+    ISSUES+=("chromium_missing")
+fi
+
+# ─── Python packages ───
+if python3 -c "import faster_whisper" 2>/dev/null; then
+    echo "  [✓] faster-whisper (audio transcription)"
+else
+    echo "  [ ] faster-whisper — not installed"
+    ISSUES+=("whisper_missing")
+fi
+if command -v edge-tts &> /dev/null; then
+    echo "  [✓] edge-tts (voice replies)"
+else
+    echo "  [ ] edge-tts — not installed"
+    ISSUES+=("edgetts_missing")
+fi
+
+# ─── tmux (required for Remote Code Sessions) ───
+if command -v tmux &> /dev/null; then
+    echo "  [✓] tmux $(tmux -V 2>/dev/null | awk '{print $2}')"
+else
+    echo "  [ ] tmux — not installed (required for Remote Code Sessions)"
+    ISSUES+=("tmux_missing")
 fi
 
 # ─── Claude Code ───
@@ -91,7 +132,7 @@ if command -v claude &> /dev/null; then
     echo "  [✓] Claude Code (${CLAUDE_VER})"
     HAS_CLAUDE=true
 else
-    echo "  [ ] Claude Code — not installed (optional)"
+    echo "  [ ] Claude Code — not installed"
     HAS_CLAUDE=false
 fi
 
@@ -187,57 +228,69 @@ if [[ " ${ISSUES[*]} " =~ "pm2_missing" ]]; then
     echo "  [✓] pm2 installed"
 fi
 
+# tmux (required for Remote Code Sessions — "start remote" from your phone)
+if [[ " ${ISSUES[*]} " =~ "tmux_missing" ]]; then
+    echo "  [*] Installing tmux..."
+    apt install -y tmux > /dev/null 2>&1
+    echo "  [✓] tmux installed"
+fi
+
 # npm dependencies
 echo "  [*] Installing bot dependencies..."
 npm install --silent 2>&1 | tail -1
 echo "  [✓] Dependencies ready"
 
-# ─── Optional: Video + Browser tools ───
-echo ""
-echo "  Want video + browser features?"
-echo "  (Download YouTube/TikTok, browse websites, fill forms, take screenshots)"
-echo "  This installs yt-dlp, ffmpeg, and Chromium (~500MB disk)."
-echo ""
-read -p "  Install video + browser tools? (y/N): " INSTALL_MEDIA
-INSTALL_MEDIA="${INSTALL_MEDIA:-N}"
-
-if [ "$INSTALL_MEDIA" = "y" ] || [ "$INSTALL_MEDIA" = "Y" ]; then
-    echo ""
-    # yt-dlp
-    if command -v yt-dlp &> /dev/null; then
-        echo "  [✓] yt-dlp already installed"
-    else
-        echo "  [*] Installing yt-dlp..."
-        curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp 2>/dev/null
-        chmod a+rx /usr/local/bin/yt-dlp
-        echo "  [✓] yt-dlp installed"
-    fi
-
-    # ffmpeg
-    if command -v ffmpeg &> /dev/null; then
-        echo "  [✓] ffmpeg already installed"
-    else
-        echo "  [*] Installing ffmpeg..."
-        apt install -y ffmpeg > /dev/null 2>&1
-        echo "  [✓] ffmpeg installed"
-    fi
-
-    # Chromium for Puppeteer
-    if command -v chromium-browser &> /dev/null || command -v chromium &> /dev/null; then
-        echo "  [✓] Chromium already installed"
-    else
-        echo "  [*] Installing Chromium (for browser automation)..."
-        apt install -y chromium-browser 2>/dev/null || apt install -y chromium 2>/dev/null
-        echo "  [✓] Chromium installed"
-    fi
-    echo ""
-else
-    echo "  [i] Skipped — you can install later:"
-    echo "       yt-dlp:   curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
-    echo "       ffmpeg:   apt install -y ffmpeg"
-    echo "       chromium: apt install -y chromium-browser"
-    echo ""
+# ─── curl + pip3 ───
+if [[ " ${ISSUES[*]} " =~ "curl_missing" ]]; then
+    echo "  [*] Installing curl..."
+    apt install -y curl > /dev/null 2>&1
+    echo "  [✓] curl installed"
 fi
+if [[ " ${ISSUES[*]} " =~ "pip3_missing" ]]; then
+    echo "  [*] Installing pip3..."
+    apt install -y python3-pip > /dev/null 2>&1
+    echo "  [✓] pip3 installed"
+fi
+
+# ─── Video + Browser tools ───
+echo ""
+echo "  [*] Installing video + browser tools..."
+echo ""
+
+# yt-dlp
+if [[ " ${ISSUES[*]} " =~ "ytdlp_missing" ]]; then
+    echo "  [*] Installing yt-dlp..."
+    curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp 2>/dev/null
+    chmod a+rx /usr/local/bin/yt-dlp
+    echo "  [✓] yt-dlp installed"
+fi
+
+# ffmpeg
+if [[ " ${ISSUES[*]} " =~ "ffmpeg_missing" ]]; then
+    echo "  [*] Installing ffmpeg..."
+    apt install -y ffmpeg > /dev/null 2>&1
+    echo "  [✓] ffmpeg installed"
+fi
+
+# Chromium for Puppeteer
+if [[ " ${ISSUES[*]} " =~ "chromium_missing" ]]; then
+    echo "  [*] Installing Chromium (for browser automation)..."
+    apt install -y chromium-browser 2>/dev/null || apt install -y chromium 2>/dev/null
+    echo "  [✓] Chromium installed"
+fi
+
+# ─── Python packages ───
+if [[ " ${ISSUES[*]} " =~ "whisper_missing" ]]; then
+    echo "  [*] Installing faster-whisper (audio transcription)..."
+    pip3 install -q faster-whisper 2>/dev/null
+    echo "  [✓] faster-whisper installed"
+fi
+if [[ " ${ISSUES[*]} " =~ "edgetts_missing" ]]; then
+    echo "  [*] Installing edge-tts (free voice replies)..."
+    pip3 install -q edge-tts 2>/dev/null
+    echo "  [✓] edge-tts installed"
+fi
+echo ""
 
 # Create directories
 mkdir -p data auth-state
@@ -753,28 +806,51 @@ echo ""
 if [ "$HAS_CLAUDE" = true ]; then
     echo "  [✓] Claude Code already installed — skipping"
 else
-    echo "  ⭐ HIGHLY RECOMMENDED: Claude Code makes your bot way smarter."
-    echo "  Without it, all messages use GPT-4o (pay-per-use API costs)."
-    echo "  With it, most conversations route through Claude for better"
-    echo "  responses at a flat monthly fee (no extra per-message cost)."
+    echo "  [*] Installing Claude Code..."
+    echo "  Claude Code powers most conversations (flat fee instead of pay-per-use),"
+    echo "  Build Mode, and Remote Code Sessions (code from your phone)."
     echo ""
-    echo "  Requires a Claude account (\$20/mo Pro or \$100/mo Max)."
+    curl -fsSL https://claude.ai/install.sh | sh 2>&1
     echo ""
-    read -p "  Install Claude Code? (y/N): " INSTALL_CLAUDE
-    if [ "$INSTALL_CLAUDE" = "y" ] || [ "$INSTALL_CLAUDE" = "Y" ]; then
+    echo "  [*] Now log in to your Claude account (Pro \$20/mo or Max \$100/mo):"
+    echo ""
+    claude login
+    echo ""
+    echo "  [✓] Claude Code installed and logged in"
+    HAS_CLAUDE=true
+fi
+
+# ─── Gmail (optional) ───
+echo ""
+if [ -f "data/gmail-oauth-credentials.json" ] && [ -f "data/gmail-oauth-tokens.json" ]; then
+    echo "  [✓] Gmail already configured — skipping"
+else
+    echo "  Want email features? (search inbox, read emails, send emails)"
+    echo "  Requires a Google Cloud OAuth credential (free)."
+    echo "  You can set this up later by running: python3 read-gmail.py setup"
+    echo ""
+    read -p "  Set up Gmail now? (y/N): " SETUP_GMAIL
+    if [ "$SETUP_GMAIL" = "y" ] || [ "$SETUP_GMAIL" = "Y" ]; then
         echo ""
-        echo "  [*] Installing Claude Code..."
-        curl -fsSL https://claude.ai/install.sh | sh 2>&1
+        echo "  To get OAuth credentials:"
+        echo "    1. Go to https://console.cloud.google.com/apis/credentials"
+        echo "    2. Create a project (or use an existing one)"
+        echo "    3. Enable the Gmail API"
+        echo "    4. Create an OAuth 2.0 Client ID (Desktop app)"
+        echo "    5. Download the JSON file"
         echo ""
-        echo "  [*] Now log in to your Claude account:"
-        echo ""
-        claude login
-        echo ""
-        echo "  [✓] Claude Code installed and logged in"
-        HAS_CLAUDE=true
+        read -p "  Paste the FULL PATH to your downloaded OAuth JSON file: " GMAIL_CREDS_PATH
+        if [ -f "$GMAIL_CREDS_PATH" ]; then
+            cp "$GMAIL_CREDS_PATH" data/gmail-oauth-credentials.json
+            echo "  [✓] OAuth credentials saved"
+            echo ""
+            python3 read-gmail.py setup
+        else
+            echo "  [!] File not found: $GMAIL_CREDS_PATH"
+            echo "  [i] You can set up Gmail later: python3 read-gmail.py setup"
+        fi
     else
-        echo "  [i] Skipped — bot will use GPT-4o for all messages (higher API costs, less natural)"
-        echo "  [i] You can install later: curl -fsSL https://claude.ai/install.sh | sh && claude login"
+        echo "  [i] Skipped — set up later: python3 read-gmail.py setup"
     fi
 fi
 

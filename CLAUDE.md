@@ -204,10 +204,21 @@ Conversations are stored in SQLite (`sessions` table) as JSON arrays of messages
 `config.json` is watched every 2s. Model changes take effect on next message. Or use `/reload` command in WhatsApp.
 
 ## Setup requirements
-- Node.js 18+
-- **Claude Code CLI** (required — primary brain for most tasks; install: `curl -fsSL https://claude.ai/install.sh | sh`)
-- Claude Pro ($20/mo) or Max ($100/mo) subscription for free CLI usage
-- API keys: OpenAI (required for tool loop + Whisper + TTS + embeddings), Gemini (optional fallback), Brave Search (optional)
+All installed automatically by `bash setup.sh`:
+- Node.js 18+, pm2, build tools
+- **Claude Code CLI** (required — primary brain; auto-installed, just needs `claude login`)
+- Claude Pro ($20/mo) or Max ($100/mo) subscription
+- tmux (for Remote Code Sessions)
+- ffmpeg, yt-dlp (video processing)
+- Chromium (browser automation via Puppeteer)
+- faster-whisper (audio transcription), edge-tts (voice replies)
+- curl, pip3
+
+**API keys needed (entered during setup):**
+- OpenAI (required — tool loop + Whisper + TTS + embeddings)
+- Gemini (optional fallback)
+- Brave Search (optional)
+- Gmail OAuth credentials (optional — email features, run `python3 read-gmail.py setup`)
 - A WhatsApp account to link via QR code, or a Telegram bot token
 
 ## Commit conventions

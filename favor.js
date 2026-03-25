@@ -925,7 +925,7 @@ async function executeTool(name, input, context = {}) {
         const max = Math.min(max_results || 5, 10);
         const result = await new Promise((resolve, reject) => {
           const { execFile } = require('child_process');
-          execFile('python3', ['/root/read-gmail.py', 'search', query, String(max)], { timeout: 30000 }, (err, stdout, stderr) => {
+          execFile('python3', [path.join(__dirname, 'read-gmail.py'), 'search', query, String(max)], { timeout: 30000 }, (err, stdout, stderr) => {
             if (err) reject(new Error(stderr || err.message));
             else resolve(stdout.trim());
           });
@@ -939,7 +939,7 @@ async function executeTool(name, input, context = {}) {
         const { message_id } = input;
         const result = await new Promise((resolve, reject) => {
           const { execFile } = require('child_process');
-          execFile('python3', ['/root/read-gmail.py', 'read', message_id], { timeout: 30000 }, (err, stdout, stderr) => {
+          execFile('python3', [path.join(__dirname, 'read-gmail.py'), 'read', message_id], { timeout: 30000 }, (err, stdout, stderr) => {
             if (err) reject(new Error(stderr || err.message));
             else resolve(stdout.trim());
           });
@@ -952,7 +952,7 @@ async function executeTool(name, input, context = {}) {
       try {
         const { to, subject, body: emailBody, attachment } = input;
         if (!to || !subject || !emailBody) return 'Missing required fields: to, subject, body';
-        const args = ['python3', '/root/send-gmail.py', to, subject, emailBody];
+        const args = ['python3', path.join(__dirname, 'send-gmail.py'), to, subject, emailBody];
         if (attachment) args.push(attachment);
         const result = await new Promise((resolve, reject) => {
           const { execFile } = require('child_process');
@@ -2028,14 +2028,16 @@ async function startWhatsApp() {
         }
         process.exit(0);
       } else {
-        // Auto-reconnect for all other disconnect reasons
+        // Auto-reconnect with exponential backoff (5s, 10s, 20s, 40s... capped at 60s)
         if (restartAttempts < config.service.maxRestartAttempts) {
           restartAttempts++;
-          const delay = config.service.restartDelayMs;
+          const baseDelay = config.service.restartDelayMs || 5000;
+          const delay = Math.min(baseDelay * Math.pow(2, restartAttempts - 1), 60000);
           console.log(`[WHATSAPP] Reconnect attempt ${restartAttempts}/${config.service.maxRestartAttempts} in ${delay}ms`);
           setTimeout(() => startWhatsApp(), delay);
         } else {
-          console.error('[WHATSAPP] Max restart attempts reached.');
+          console.error('[WHATSAPP] Max restart attempts reached — letting pm2 handle full restart.');
+          process.exit(1);
         }
       }
     }
@@ -3013,7 +3015,7 @@ Be concise. Return your analysis/solution directly.`;
 === TOOLS AVAILABLE ===
 You can take actions via Bash commands:
 - Send WhatsApp message: curl -s -X POST http://localhost:3099/send -H 'Content-Type: application/json' -d '{"to":"+1XXXXXXXXXX","message":"your message"}'
-- Send email: python3 /root/send-gmail.py <to> <subject> <body> [attachment]
+- Send email: python3 send-gmail.py <to> <subject> <body> [attachment]
 - Search bot memory: curl -s http://localhost:3099/memory-search?q=query (if available)
 - Run server commands: any bash command
 When you need to message someone, USE these tools. Do NOT say you can't send messages.
@@ -3113,7 +3115,7 @@ Produce a well-structured, professional output. Use markdown formatting with hea
 === TOOLS AVAILABLE ===
 You can take actions via Bash commands:
 - Send WhatsApp message: curl -s -X POST http://localhost:3099/send -H 'Content-Type: application/json' -d '{"to":"+1XXXXXXXXXX","message":"your message"}'
-- Send email: python3 /root/send-gmail.py <to> <subject> <body> [attachment]
+- Send email: python3 send-gmail.py <to> <subject> <body> [attachment]
 When you need to message someone, USE these tools. Do NOT say you can't send messages.
 
 === CONVERSATION ===
