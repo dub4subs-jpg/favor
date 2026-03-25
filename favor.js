@@ -11,6 +11,7 @@ const { exec, execFile } = require('child_process');
 const FavorMemory = require('./db');
 const CronEngine = require('./cron');
 const Compactor = require('./compactor');
+const ConversationScribe = require('./scribe');
 const { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable, getClaudeTip } = require('./router');
 const Vault = require('./vault');
 const Browser = require('./browser');
@@ -270,10 +271,13 @@ memoryBridge.init(db, getEmbedding);
 const compactor = new Compactor(db, {
   apiKey: OPENAI_API_KEY,
   compactModel: config.compaction?.model || 'gpt-4o-mini',
-  threshold: config.compaction?.threshold || 30,
-  keepRecent: config.compaction?.keepRecent || 12,
+  threshold: config.compaction?.threshold || 50,
+  keepRecent: config.compaction?.keepRecent || 20,
   summaryTokens: config.compaction?.summaryTokens || 512
 });
+
+// ─── CONVERSATION SCRIBE ───
+const scribe = new ConversationScribe(db);
 
 // ─── VERSION-AWARE STARTUP MESSAGE ───
 // On first boot after an update, tell the operator what changed in plain language.
@@ -1530,6 +1534,7 @@ function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
     config, db, compactor, platform: PLATFORM,
     contact, messageText, relevantMemories,
     dynamicKnowledge: buildDynamicKnowledge(messageText),
+    scribe,
   });
 }
 
@@ -2418,6 +2423,7 @@ const cronEngine = new CronEngine(db, {
             : cron.contact.replace('+', '').replace('@c.us', '').replace('@s.whatsapp.net', '') + '@s.whatsapp.net';
           if (!sock) { console.warn('[CRON] Socket disconnected, skipping send'); return; }
           await sock.sendMessage(jid, { text: reply });
+          scribe.capture(jid, `[Cron: ${cron.label}] ${reply.substring(0, 100)}`, 'proactive');
           console.log(`[CRON] Sent proactive message (${reply.length} chars)`);
         } else {
           console.log(`[CRON] Skipped (no actionable content)`);
@@ -2906,6 +2912,7 @@ async function handleMessage(msg) {
       history.push({ role: 'user', content: [{ type: 'text', text: body }] });
       history.push({ role: 'assistant', content: `[Teach Mode] Executed "${teachMatch.command_name}":\n${summary}` });
       db.saveSession(jid, history);
+      scribe.capture(jid, `[Teach] Ran "${teachMatch.command_name}": ${(summary || '').substring(0, 100)}`, 'teach');
       return;
     }
 
@@ -3380,28 +3387,50 @@ Run the Bash command NOW.`;
       console.warn('[THREADS] Detection failed (non-fatal):', e.message)
     );
 
-    // ─── AUTO FACT EXTRACTION — learn from every operator conversation (free via CLI) ───
+    // ─── AUTO FACT EXTRACTION + CONVERSATION SCRIBE — learn from every operator conversation (free via CLI) ───
     if (isOperator(jid) && body && body.length > 20 && reply && reply !== '__SKIP__' && reply.length > 20) {
       (async () => {
         try {
-          const extractPrompt = `Extract 0-3 key facts worth remembering long-term from this conversation. Focus on: personal preferences, decisions made, new information about people/projects/plans, or anything the user would expect you to remember next time.
+          const extractPrompt = `Extract key information from this conversation. Return ONLY valid JSON:
+{"facts":[{"category":"fact|preference|decision","content":"concise fact"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"}
 
-Do NOT extract: greetings, small talk, questions without answers, things already obvious from context, or generic information.
-
-Return ONLY a JSON array of objects: [{"category":"fact|preference|decision","content":"concise fact"}]
-If nothing worth saving, return [].
+Rules:
+- facts: 0-3 key facts worth remembering (preferences, decisions, plans). Skip greetings/small talk.
+- journal: ALWAYS provide a 1-line summary (max 150 chars) of what this exchange was about. Include specific names, numbers, prices, file paths if mentioned.
+- journal_category: "decision" if a choice was made, "task" if work was requested, "pending" if a question is unanswered, otherwise "exchange"
+- If nothing worth saving for facts, return empty array but STILL provide journal.
 
 User said: ${(body || '').substring(0, 600)}
 Bot replied: ${reply.substring(0, 600)}`;
           const raw = await runClaudeCLI(extractPrompt, 15000, { model: 'haiku' });
-          if (!raw) return;
+          if (!raw) {
+            const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
+            scribe.capture(jid, fallback);
+            return;
+          }
           const cleaned = raw.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
-          const extracted = JSON.parse(cleaned);
-          if (!Array.isArray(extracted)) return;
-          for (const item of extracted.slice(0, 3)) {
+          let parsed;
+          try { parsed = JSON.parse(cleaned); } catch (_) {
+            const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
+            scribe.capture(jid, fallback);
+            return;
+          }
+
+          // ─── SCRIBE: Save conversation journal entry ───
+          if (parsed.journal && typeof parsed.journal === 'string') {
+            const jCat = ['exchange', 'decision', 'task', 'pending'].includes(parsed.journal_category)
+              ? parsed.journal_category : 'exchange';
+            scribe.capture(jid, parsed.journal, jCat);
+          } else {
+            const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
+            scribe.capture(jid, fallback);
+          }
+
+          // Backward-compatible: if array (old format), treat as facts
+          const facts = Array.isArray(parsed) ? parsed : (parsed.facts || []);
+          for (const item of facts.slice(0, 3)) {
             if (!item.content || item.content.length < 10) continue;
             const category = ['fact', 'preference', 'decision'].includes(item.category) ? item.category : 'fact';
-            // Dedup: check if similar content exists
             const existing = db.db.prepare(
               'SELECT id FROM memories WHERE category = ? AND content LIKE ? LIMIT 1'
             ).get(category, `%${item.content.substring(0, 50)}%`);
@@ -3413,10 +3442,18 @@ Bot replied: ${reply.substring(0, 600)}`;
           }
         } catch (_) { /* non-fatal */ }
       })();
+    } else if (isOperator(jid) && reply && reply !== '__SKIP__') {
+      // Scribe fallback: operator messages too short for fact extraction (media, short texts)
+      const fallback = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
+      scribe.capture(jid, fallback);
     }
 
-    // ─── PER-CONTACT MEMORY — auto-save key facts about non-operator contacts ───
+    // ─── PER-CONTACT MEMORY + SCRIBE — auto-save key facts about non-operator contacts ───
     if (!isOperator(jid) && reply && reply !== '__SKIP__' && body && body.length > 10) {
+      // Scribe: capture journal entry for non-operator contacts too
+      const contactJournal = `${(body || '').substring(0, 80)} → ${reply.substring(0, 80)}`;
+      scribe.capture(jid, contactJournal);
+
       (async () => {
         try {
           const factPrompt = `Extract 0-2 key facts worth remembering about this person from this exchange. Return ONLY a JSON array of short strings. If nothing worth saving, return [].

@@ -367,6 +367,13 @@ class FavorMemory {
     return stmt.all(contact, limit);
   }
 
+  getTodayCompactionSummaries(contact) {
+    const today = new Date().toISOString().substring(0, 10);
+    return this.db.prepare(
+      "SELECT * FROM compaction_summaries WHERE contact = ? AND created_at >= ? ORDER BY created_at ASC"
+    ).all(contact, today);
+  }
+
   // ─── CRONS ───
   createCron(contact, label, schedule, task) {
     const nextRun = this._calcNextRun(schedule);

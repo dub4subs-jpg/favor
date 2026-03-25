@@ -84,7 +84,49 @@ function buildThreadPrompt(db, contact) {
  * @param {string} opts.dynamicKnowledge - Knowledge base content for this message
  * @returns {string}
  */
-function buildSystemPrompt({ config, db, compactor, platform, contact, messageText = '', relevantMemories = [], dynamicKnowledge = '' }) {
+function buildJournalPrompt(scribe, contact) {
+  if (!scribe) return '';
+  const today = scribe.getTodayJournal(contact);
+  const previous = scribe.getRecentJournal(contact, 7);
+  if (!today.length && !previous.length) return '';
+
+  let prompt = '\n\n=== CONVERSATION MEMORY (persistent — everything discussed until resolved) ===\n';
+  let totalChars = 0;
+  const CHAR_CAP = 3000;
+
+  if (today.length) {
+    prompt += 'TODAY:\n';
+    prompt += today.map((e, i) => {
+      const time = e.created_at.substring(11, 16);
+      const marker = e.category === 'pending' ? ' [PENDING]' :
+                     e.category === 'task' ? ' [TASK]' :
+                     e.category === 'decision' ? ' [DECISION]' : '';
+      return `${i + 1}. [${time}] ${e.summary}${marker}`;
+    }).join('\n');
+    totalChars = prompt.length;
+  }
+
+  if (previous.length && totalChars < CHAR_CAP) {
+    const byDate = {};
+    for (const e of previous) {
+      const date = e.created_at.substring(0, 10);
+      (byDate[date] = byDate[date] || []).push(e);
+    }
+    for (const [date, entries] of Object.entries(byDate).sort().reverse()) {
+      if (totalChars >= CHAR_CAP) break;
+      const section = `\n${date}:\n` +
+        entries.slice(0, 5).map(e => `- ${e.summary}`).join('\n') +
+        (entries.length > 5 ? `\n  ...and ${entries.length - 5} more` : '');
+      totalChars += section.length;
+      if (totalChars < CHAR_CAP) prompt += section;
+    }
+  }
+
+  prompt += '\n=== END CONVERSATION MEMORY ===';
+  return prompt;
+}
+
+function buildSystemPrompt({ config, db, compactor, platform, contact, messageText = '', relevantMemories = [], dynamicKnowledge = '', scribe = null }) {
   const name = config.identity.name;
   const contextPrefix = compactor.getContextPrefix(contact || '');
   const securityPhrase = (platform === 'telegram' ? config.telegram?.securityPhrase : config.whatsapp?.securityPhrase) || 'NOT_SET';
@@ -119,7 +161,7 @@ Then start executing step 1. Each subsequent tool call should reference which pl
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
 
 MEMORY SYNC: You have sync_update and sync_recover tools. Use sync_update to log important actions, decisions, task completions, and file changes so Claude Code stays in sync with your state. Use sync_recover after any restart to rebuild context from shared state.
-Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildMemoryPrompt(db, relevantMemories) + buildThreadPrompt(db, contact) + `
+Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories) + buildThreadPrompt(db, contact) + `
 
 === REMINDER ===
 You MUST follow all rules in your knowledge base above — especially your identity, personality, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;
@@ -129,6 +171,7 @@ module.exports = {
   buildSystemPrompt,
   buildMemoryPrompt,
   buildThreadPrompt,
+  buildJournalPrompt,
   rankMemories,
   scoreMemoryByRecency,
 };

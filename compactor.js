@@ -87,16 +87,30 @@ class Compactor {
       return '';
     }).filter(Boolean).join('\n');
 
-    const prompt = `You are summarizing a conversation between an AI companion and its operator. Extract:
-1. Key topics discussed
-2. Decisions made
-3. Tasks mentioned or assigned
-4. Important facts shared
-5. Emotional tone / relationship context
+    const prompt = `You are compressing a conversation into a reference document. The AI will read this summary to continue the conversation seamlessly — it MUST contain enough detail to avoid asking the user to repeat themselves.
 
-Be concise but preserve anything the AI would need to continue the conversation naturally. Write in third person past tense.
+RULES:
+- Preserve ALL specific names, numbers, file paths, URLs, prices, dates, and technical details
+- Keep direct quotes of decisions or commitments ("decided to X", "agreed on Y")
+- Record the current state of any ongoing task (what's done vs what's pending)
+- Use bullet points, not prose — density over narrative
+- If the user asked a question that was answered, record BOTH the question and answer
+- If the user asked something NOT YET answered, mark it: [PENDING: question]
 
-Summarize this conversation:
+Format:
+## Topics
+- topic: specific details...
+
+## Decisions & Commitments
+- decided/agreed: specifics...
+
+## Current State (in-progress work)
+- task: status...
+
+## Key Details (names, numbers, paths, prices)
+- detail...
+
+Compress this conversation:
 
 ${transcript.substring(0, 8000)}`;
 
@@ -137,11 +151,45 @@ ${transcript}`;
   }
 
   getContextPrefix(contact) {
-    const summaries = this.db.getCompactionSummaries(contact, 3);
-    if (!summaries.length) return '';
-    return '\n\n=== PREVIOUS CONVERSATION CONTEXT ===\n' +
-      summaries.reverse().map((s, i) => `[Session ${i + 1} — ${s.message_count} messages, ${s.created_at}]\n${s.summary}`).join('\n\n') +
-      '\n=== END PREVIOUS CONTEXT ===';
+    // Tier 1: ALL of today's summaries (never lose same-day context)
+    const todaySummaries = this.db.getTodayCompactionSummaries(contact);
+
+    // Tier 2: Last 2 from previous days (multi-day continuity)
+    const olderSummaries = this.db.getCompactionSummaries(contact, 2)
+      .filter(s => !todaySummaries.some(t => t.id === s.id))
+      .reverse();
+
+    if (!todaySummaries.length && !olderSummaries.length) return '';
+
+    let prefix = '\n\n=== PREVIOUS CONVERSATION CONTEXT ===\n';
+
+    if (todaySummaries.length) {
+      if (todaySummaries.length > 4) {
+        const recent = todaySummaries.slice(-2);
+        const older = todaySummaries.slice(0, -2);
+        const condensed = older.map(s => s.summary).join('\n').substring(0, 1500);
+        prefix += `[Earlier today — ${older.reduce((sum, s) => sum + s.message_count, 0)} messages condensed]\n${condensed}\n\n`;
+        for (const s of recent) {
+          const time = s.created_at.substring(11, 16);
+          prefix += `[${time} — ${s.message_count} messages]\n${s.summary}\n\n`;
+        }
+      } else {
+        for (const s of todaySummaries) {
+          const time = s.created_at.substring(11, 16);
+          prefix += `[${time} — ${s.message_count} messages]\n${s.summary}\n\n`;
+        }
+      }
+    }
+
+    if (olderSummaries.length) {
+      prefix += '--- Earlier Days ---\n';
+      for (const s of olderSummaries) {
+        prefix += `[${s.created_at.substring(0, 10)} — ${s.message_count} messages]\n${s.summary}\n\n`;
+      }
+    }
+
+    prefix += '=== END PREVIOUS CONTEXT ===';
+    return prefix;
   }
 }
 
