@@ -3470,15 +3470,22 @@ Bot replied: ${reply.substring(0, 600)}`;
       // Uses keyword matching instead of CLI to avoid concurrency limits
       const pendingItems = scribe.getTodayJournal(jid).filter(e => ['pending', 'task'].includes(e.category));
       if (pendingItems.length && body && body.length > 2) {
-        const msg = (body || '').toLowerCase() + ' ' + reply.substring(0, 200).toLowerCase();
-        const RESOLVE_SIGNALS = /\b(done|finished|ok i (ate|did|got|fixed|found)|completed|all set|got it|i did|it'?s done|taken care|sorted|resolved|already|back|ready|let'?s go)\b/i;
+        const msg = (body || '').toLowerCase() + ' ' + reply.substring(0, 500).toLowerCase();
+        const RESOLVE_SIGNALS = /\b(done|finished|ok i (ate|did|got|fixed|found)|completed|all set|got it|i did|it'?s done|taken care|sorted|resolved|already|back|ready|let'?s go|nevermind|nvm|figured it out)\b/i;
         if (RESOLVE_SIGNALS.test(msg)) {
-          for (const entry of pendingItems) {
-            const keywords = entry.summary.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-            const overlap = keywords.filter(w => msg.includes(w)).length;
-            if (overlap >= 2 || pendingItems.length === 1) {
-              scribe.resolve(entry.id);
-              console.log(`[SCRIBE] Auto-resolved entry #${entry.id} (keyword match)`);
+          // Only resolve pending entries (not task — tasks need explicit completion)
+          const resolvable = pendingItems.filter(e => e.category === 'pending');
+          if (resolvable.length === 1) {
+            scribe.resolve(resolvable[0].id);
+            console.log(`[SCRIBE] Auto-resolved entry #${resolvable[0].id} (single pending + signal)`);
+          } else if (resolvable.length > 1) {
+            for (const entry of resolvable) {
+              const words = entry.summary.toLowerCase().split(/[\s,;]+/).filter(w => w.length > 3);
+              const overlap = words.filter(w => msg.includes(w)).length;
+              if (overlap >= 1) {
+                scribe.resolve(entry.id);
+                console.log(`[SCRIBE] Auto-resolved entry #${entry.id} (keyword match: ${overlap} words)`);
+              }
             }
           }
         }
