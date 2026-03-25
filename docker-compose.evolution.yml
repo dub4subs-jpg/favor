@@ -1,0 +1,52 @@
+## Evolution API for Favor
+## Run: docker compose -f docker-compose.evolution.yml up -d
+##
+## This gives Favor a REST API layer for WhatsApp instead of raw Baileys.
+## Set "platform": "evolution" in config.json to use it.
+##
+## Dashboard: http://localhost:8080/manager
+## API docs:  http://localhost:8080/docs
+
+services:
+  evolution-api:
+    image: atendai/evolution-api:latest
+    container_name: favor-evolution
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ## Auth
+      - AUTHENTICATION_API_KEY=favor-change-me-in-production
+      ## Database (SQLite — no external DB needed)
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://postgres:favor@postgres:5432/evolution
+      ## Webhook → Favor's webhook listener
+      - WEBHOOK_GLOBAL_URL=http://host.docker.internal:3300/webhook
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_EVENTS=MESSAGES_UPSERT,CONNECTION_UPDATE,QRCODE_UPDATED
+      ## Server
+      - SERVER_PORT=8080
+      - LOG_LEVEL=WARN
+    volumes:
+      - evolution_data:/evolution/instances
+    depends_on:
+      - postgres
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: favor-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=favor
+      - POSTGRES_DB=evolution
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  evolution_data:
+  postgres_data:

@@ -41,16 +41,19 @@ That's it. Your bot is live.
 
 ---
 
-## Telegram vs WhatsApp
+## Telegram vs WhatsApp vs Evolution API
 
-| | Telegram | WhatsApp |
-|---|---------|----------|
-| **Setup** | Message @BotFather, get a token | Need a second phone number |
-| **Extra phone needed?** | No | Yes |
-| **How it works** | Bot API (official, free) | Baileys (unofficial, free) |
-| **Best for** | Most people | People who already have a spare number |
+| | Telegram | WhatsApp | WhatsApp (Evolution API) |
+|---|---------|----------|------------------------|
+| **Setup** | Message @BotFather, get a token | Scan QR code in terminal | Scan QR code in a web dashboard |
+| **Extra phone needed?** | No | Yes | Yes |
+| **How it works** | Bot API (official, free) | Baileys direct (code manages connection) | REST API via Docker (Evolution API manages Baileys for you) |
+| **Docker required?** | No | No | Yes |
+| **Best for** | Most people | Devs comfortable with Baileys | WhatsApp users who want easy setup + zero Baileys headaches |
 
 **Telegram is recommended** — anyone can set it up in minutes with zero hassle. No extra phone, no QR code, no second number.
+
+**WhatsApp with Evolution API** is the easiest way to run WhatsApp. Instead of your bot managing the WhatsApp connection directly (dealing with QR codes in a terminal, connection drops, auth state files, and Baileys library updates), Evolution API handles all of that inside a Docker container. You get a nice web dashboard to scan your QR code, and your bot just talks to a simple REST API. When Baileys pushes a breaking update, the Evolution API team patches it — you just pull the new Docker image.
 
 ---
 
@@ -339,15 +342,58 @@ After setup, you can personalize:
 
 ### Switch platforms
 
-To switch between Telegram and WhatsApp, change `"platform"` in `config.json`:
+To switch between Telegram, WhatsApp, or Evolution API, change `"platform"` in `config.json`:
+
 ```json
 "platform": "telegram"
 ```
-or
 ```json
 "platform": "whatsapp"
 ```
+```json
+"platform": "evolution"
+```
+
 Then restart the bot. Your memory, knowledge, and settings carry over.
+
+### WhatsApp via Evolution API (recommended for WhatsApp)
+
+If you chose WhatsApp and want the easiest setup, use Evolution API instead of raw Baileys:
+
+**1. Start Evolution API:**
+```bash
+docker compose -f docker-compose.evolution.yml up -d
+```
+
+**2. Set your platform to `evolution` in `config.json`:**
+```json
+{
+  "platform": "evolution",
+  "evolution": {
+    "apiUrl": "http://localhost:8080",
+    "apiKey": "favor-change-me-in-production",
+    "instanceName": "favor",
+    "webhookPort": 3300
+  }
+}
+```
+
+**3. Open the Evolution API dashboard:**
+Go to `http://your-server-ip:8080/manager` in your browser. You'll see your instance — click it and scan the QR code with WhatsApp on your phone.
+
+**4. Start the bot:**
+```bash
+node favor.js
+```
+
+That's it. Evolution API handles the WhatsApp connection, QR codes, reconnection, and auth state. Your bot just sends and receives messages through a clean REST API.
+
+**Why use this over raw WhatsApp?**
+- QR code scanning in a web browser (not a terminal)
+- Automatic reconnection and session management
+- When Baileys breaks (it happens), just `docker compose pull && docker compose up -d` — no code changes
+- Multi-number support if you ever need it
+- Web dashboard to monitor connection status
 
 ### Guardian limits
 
@@ -380,6 +426,7 @@ Add to `config.json` to customize rate limits:
 ```
 favor.js                — Main bot: message handling, multi-model routing, tool loop
 adapters/telegram.js    — Telegram bot adapter (grammy)
+adapters/evolution.js   — Evolution API adapter (WhatsApp via REST + Docker)
 router.js               — AI router: classifies messages and picks the best model
 db.js                   — SQLite database (memory, sessions, topics, crons, guard logs)
 compactor.js            — Summarizes old messages to save context space

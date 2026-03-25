@@ -50,6 +50,12 @@
     "debounceMs": 0,
     "credentialsDir": "./auth-state"
   },
+  "evolution": {
+    "apiUrl": "http://localhost:8080",
+    "apiKey": "favor-change-me-in-production",
+    "instanceName": "favor",
+    "webhookPort": 3300
+  },
   "memory": {
     "backend": "sqlite",
     "dbPath": "./data/favor.db",
