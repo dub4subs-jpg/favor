@@ -3,8 +3,9 @@
 // Add new alive features as modules in this folder
 //
 // Current modules:
-//   checkins.js  — morning/evening check-ins
+//   checkins.js  — morning/evening check-ins + morning intelligence brief
 //   callbacks.js — memory callbacks (resurface forgotten tasks/decisions)
+//   insights.js  — proactive situational intelligence (contacts, patterns, business rhythms)
 //
 // Future modules:
 //   voice.js     — voice note replies
@@ -14,6 +15,7 @@
 
 const Checkins = require('./checkins');
 const Callbacks = require('./callbacks');
+const Insights = require('./insights');
 
 class AliveEngine {
   constructor(db, openai, opts = {}) {
@@ -29,10 +31,13 @@ class AliveEngine {
     this.morningHourUTC = opts.morningHourUTC ?? 14;  // 9 AM EST default
     this.eveningHourUTC = opts.eveningHourUTC ?? 2;   // 9 PM EST default
     this.callbackIntervalHours = opts.callbackIntervalHours ?? 8;
+    this.morningBriefEnabled = opts.morningBrief !== false; // default true
+    this.notifQueue = opts.notifQueue || null;
 
     // Initialize modules
     this.checkins = new Checkins(this);
     this.callbacks = new Callbacks(this);
+    this.insights = new Insights(this);
 
     console.log('[ALIVE] Engine initialized');
   }
@@ -54,6 +59,7 @@ class AliveEngine {
     const created = [
       ...this.checkins.ensureCrons(labels),
       ...this.callbacks.ensureCrons(labels),
+      ...this.insights.ensureCrons(labels),
     ];
 
     if (created.length) {
@@ -89,6 +95,8 @@ class AliveEngine {
         return this.checkins.handle(cron, taskData);
       case 'alive:memory_callback':
         return this.callbacks.handle(cron, taskData);
+      case 'alive:insights':
+        return this.insights.handle(cron, taskData);
       default:
         console.warn(`[ALIVE] Unknown type: ${taskData.type}`);
     }

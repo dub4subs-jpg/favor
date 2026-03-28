@@ -86,7 +86,11 @@ Keep it to 1-3 sentences. Be casual, not formal. If this memory is stale or irre
     }
 
     const jid = this.engine.toJid(cron.contact);
-    await this.engine.sock.sendMessage(jid, { text: reply });
+    if (this.engine.notifQueue) {
+      this.engine.notifQueue.queue(cron.contact, reply, { source: 'callback' });
+    } else {
+      await this.engine.sock.sendMessage(jid, { text: reply });
+    }
     this._recentCallbacks.set(candidate.id, Date.now());
     console.log(`[ALIVE] Sent memory callback — memory #${candidate.id} (${reply.length} chars)`);
     this.engine.db.audit('alive.callback', `memory_id=${candidate.id} category=${candidate.category} chars=${reply.length}`);

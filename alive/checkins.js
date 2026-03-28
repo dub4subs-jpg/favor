@@ -1,5 +1,5 @@
 // ─── ALIVE: CHECK-INS ───
-// Morning greetings and evening wind-downs
+// Morning greetings (with optional intelligence brief) and evening wind-downs
 
 const { runCLI, isAvailable } = require('../utils/claude');
 
@@ -53,18 +53,13 @@ class Checkins {
     const style = taskData.style || 'morning';
     console.log(`[ALIVE] ${style} check-in firing`);
 
-    const context = this._gatherContext(style);
+    const isBrief = style === 'morning' && this.engine.morningBriefEnabled;
+    const context = isBrief ? this._gatherBriefContext() : this._gatherContext(style);
     const systemPrompt = this.engine.getSystemPrompt();
 
-    const prompt = `${systemPrompt}
-
-[SYSTEM: Alive check-in — ${style}]
-
-${taskData.prompt}
-
-${context}
-
-IMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning Check-in]" headers. Just talk naturally like you're texting a friend. If there's truly nothing to say, respond with exactly: SKIP`;
+    const prompt = isBrief
+      ? `${systemPrompt}\n\n[SYSTEM: Morning Intelligence Brief]\n\nCompile a concise morning brief from the data below. Format as:\n\n*Morning Brief — [today's date]*\n\nSections (skip empty ones):\n- Key items from yesterday\n- Today's schedule\n- Open tasks needing attention\n- Actionable signals\n\nKeep it punchy — bullet points, no fluff. If truly nothing to report, respond with exactly: SKIP\n\n${context}`
+      : `${systemPrompt}\n\n[SYSTEM: Alive check-in — ${style}]\n\n${taskData.prompt}\n\n${context}\n\nIMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning Check-in]" headers. Just talk naturally like you're texting a friend. If there's truly nothing to say, respond with exactly: SKIP`;
 
     let reply = '';
     try {
@@ -80,7 +75,11 @@ IMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning 
     }
 
     const jid = this.engine.toJid(cron.contact);
-    await this.engine.sock.sendMessage(jid, { text: reply });
+    if (this.engine.notifQueue) {
+      this.engine.notifQueue.queue(cron.contact, reply, { source: `checkin:${style}` });
+    } else {
+      await this.engine.sock.sendMessage(jid, { text: reply });
+    }
     console.log(`[ALIVE] Sent ${style} check-in (${reply.length} chars)`);
     this.engine.db.audit('alive.checkin', `style=${style} chars=${reply.length}`);
   }
@@ -120,6 +119,68 @@ IMPORTANT: Write your message directly — no labels, no prefixes, no "[Morning 
     parts.push(`Current: ${dayNames[now.getDay()]}, ${now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })}`);
 
     return parts.join('\n\n') || 'No recent context available.';
+  }
+
+  // Gather structured context for morning intelligence brief
+  _gatherBriefContext() {
+    const e = this.engine;
+    const parts = [];
+
+    // Yesterday's digest
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    try {
+      const digest = e.db.getDailyDigest?.(e.operatorContact, yesterday);
+      if (digest) {
+        parts.push(`YESTERDAY (${yesterday}):\n${digest.summary}${digest.topics?.length ? '\nTopics: ' + digest.topics.join(', ') : ''}${digest.decisions?.length ? '\nDecisions: ' + digest.decisions.join('; ') : ''}`);
+      }
+    } catch (_) {}
+
+    // Today's crons
+    try {
+      const crons = e.db.getCrons(e.operatorContact).filter(c => c.enabled && !c.label.startsWith('alive:'));
+      if (crons.length) {
+        parts.push(`TODAY'S SCHEDULE:\n${crons.map(c => `- ${c.label} (${c.schedule})`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Actionable signals
+    try {
+      const signals = e.db.getActionableSignals?.(e.operatorContact);
+      if (signals?.length) {
+        parts.push(`ACTIONABLE:\n${signals.map(s => `- [${s.type}] ${s.content}`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Pending tasks
+    try {
+      const tasks = e.db.getByCategory('task', 10).filter(t => t.status === 'pending' || t.status === 'active');
+      if (tasks.length) {
+        parts.push(`PENDING TASKS (${tasks.length}):\n${tasks.map(t => `- ${t.content}`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Unresolved threads
+    try {
+      const threads = e.db.getOpenThreads(e.operatorContact, 5);
+      if (threads.length) {
+        parts.push(`OPEN THREADS:\n${threads.map(t => `- ${t.summary}`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Recent lessons
+    try {
+      const lessons = e.db.getActiveLessons?.(3);
+      if (lessons?.length) {
+        parts.push(`RECENT LESSONS:\n${lessons.map(l => `- ${l.lesson}`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Day/time context
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    parts.push(`TODAY: ${dayNames[now.getDay()]}, ${now.toLocaleDateString('en-US', { timeZone: 'America/New_York' })}`);
+
+    return parts.join('\n\n') || 'No context available for briefing.';
   }
 }
 
