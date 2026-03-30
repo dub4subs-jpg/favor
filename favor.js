@@ -52,15 +52,36 @@ console.warn = (...args) => { if (typeof args[0] === 'string' && (args[0].starts
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 let config = loadConfig();
 
+function validateConfig(cfg) {
+  const required = [
+    ['model.id', cfg.model?.id],
+    ['memory.dbPath', cfg.memory?.dbPath],
+  ];
+  const missing = required.filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) {
+    console.error(`[CONFIG] Missing required fields: ${missing.join(', ')}`);
+    return false;
+  }
+  return true;
+}
+
 function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }
-  catch (e) { console.error('Failed to load config.json:', e.message); process.exit(1); }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    if (!validateConfig(cfg)) process.exit(1);
+    return cfg;
+  } catch (e) { console.error('Failed to load config.json:', e.message); process.exit(1); }
 }
 
 function reloadConfig() {
   try {
     const prev = config;
-    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    const newCfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    if (!validateConfig(newCfg)) {
+      console.error('[CONFIG] Reload rejected — invalid config, keeping previous');
+      return { changed: false, error: 'validation failed' };
+    }
+    config = newCfg;
     db.audit('config.reload', `model: ${config.model.id}`);
     console.log(`[CONFIG] Reloaded. Model: ${config.model.id}`);
     return { changed: prev.model.id !== config.model.id, prev: prev.model.id, current: config.model.id };
@@ -199,7 +220,7 @@ try {
       if (global._guardianSock && global._guardianOperatorJid) {
         global._guardianSock.sendMessage(global._guardianOperatorJid, {
           text: `🛡️ *Guardian Alert* [${alert.level}]\n${alert.message}`
-        }).catch(() => {});
+        }).catch(e => console.warn('[GUARDIAN] Alert send failed:', e.message));
       }
     },
   });
@@ -511,7 +532,7 @@ ${snippet}`;
       const similar = db.findSimilar('fact', memContent);
       if (similar) continue;
       const memId = db.save('fact', memContent.substring(0, 2000), null);
-      getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+      getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
       console.log(`[AUTO-SAVE] ${source} finding → memory #${memId}: ${fact.substring(0, 80)}`);
     }
   } catch (e) {
@@ -739,6 +760,8 @@ async function captureScreenshotBuffer() {
   }
 }
 
+const MAX_TOOL_RESULT_LENGTH = 8000; // ~2k tokens — prevents context window blowout
+
 async function executeTool(name, input, context = {}) {
   // GUARD: Role-based tool access control
   const role = context.role || 'customer';
@@ -825,13 +848,13 @@ async function executeTool(name, input, context = {}) {
         const target = similar[0];
         db.db.prepare('UPDATE memories SET content = ?, status = ?, updated_at = datetime(\'now\') WHERE id = ?')
           .run(input.content, input.status || null, target.id);
-        getEmbedding(input.content).then(emb => db.updateEmbedding(target.id, emb)).catch(() => {});
+        getEmbedding(input.content).then(emb => db.updateEmbedding(target.id, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${target.id}:`, e.message));
         return `Updated existing memory (was similar): ${input.content}`;
       }
       const memId = db.save(input.category, input.content, input.status);
       console.log(`[MEMORY] ${input.category}: ${input.content}`);
       // Embed in background — don't block the response
-      getEmbedding(input.content).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+      getEmbedding(input.content).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
       return 'Remembered: ' + input.content;
     }
     case 'memory_search': {
@@ -1207,7 +1230,7 @@ async function executeTool(name, input, context = {}) {
         // Save key learnings to fact memory
         const memContent = `Video learning (${input.url}):\n${result.summary}`;
         const memId = db.save('fact', memContent.substring(0, 2000), null);
-        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
 
         // Extract actionable techniques and save as workflow knowledge
         const techPrompt = `Extract actionable techniques, shortcuts, and design/business principles from this video summary. Format as bullet points. Only include things that could be applied to the operator's work. If there are no actionable techniques, respond with: NO_TECHNIQUES
@@ -1221,7 +1244,7 @@ ${result.summary}`;
         if (techniques && !techniques.includes('NO_TECHNIQUES')) {
           const wfContent = `[Learned from video] ${input.context || 'course'}: ${techniques}`;
           const wfId = db.save('workflow', wfContent.substring(0, 2000), null);
-          getEmbedding(wfContent.substring(0, 512)).then(emb => db.updateEmbedding(wfId, emb)).catch(() => {});
+          getEmbedding(wfContent.substring(0, 512)).then(emb => db.updateEmbedding(wfId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${wfId}:`, e.message));
 
           // Also update operator profile with learned techniques
           await updateOperatorProfile(`**From video (${input.context || input.url}):**\n${techniques}`);
@@ -1270,7 +1293,7 @@ ${pageContent}`;
         // Save to workflow memory
         const memContent = `[Learned from ${input.url}] ${input.context || ''}: ${learnings}`;
         const memId = db.save('workflow', memContent.substring(0, 2000), null);
-        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
 
         // Update operator profile
         await updateOperatorProfile(`**From article/course (${input.context || input.url}):**\n${learnings}`);
@@ -1519,6 +1542,17 @@ ${pageContent}`;
   }
 }
 
+// Wrap executeTool with size cap
+const _executeToolRaw = executeTool;
+executeTool = async function(name, input, context = {}) {
+  let result = await _executeToolRaw(name, input, context);
+  if (typeof result === 'string' && result.length > MAX_TOOL_RESULT_LENGTH) {
+    console.warn(`[TOOL] Result from "${name}" truncated: ${result.length} → ${MAX_TOOL_RESULT_LENGTH} chars`);
+    result = result.substring(0, MAX_TOOL_RESULT_LENGTH) + `\n\n[... truncated — full output was ${result.length} chars]`;
+  }
+  return result;
+};
+
 // ─── SYSTEM PROMPT ───
 // Prompt building extracted to core/prompts.js
 const { buildSystemPrompt: _buildSystemPrompt } = require('./core/prompts');
@@ -1679,7 +1713,7 @@ ${observations}`;
   if (summary && !summary.includes('NOTHING_LEARNED')) {
     const memContent = `[Workflow observation ${now}] ${summary}`;
     const memId = db.save('workflow', memContent.substring(0, 2000), null);
-    getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+    getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
     console.log(`[SCREEN] Saved workflow observations → memory #${memId} (${screenWorkflowLog.length} observations distilled)`);
 
     // Also update the operator profile knowledge file
@@ -1918,6 +1952,22 @@ async function startWhatsApp() {
       console.log(`[FAVOR] Memories: ${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T`);
       console.log(`[FAVOR] Active crons: ${cronCount}`);
       console.log(`[FAVOR] Features: vision, voice, topics, crons, compaction, proactive, alive, sync`);
+
+      // ─── STARTUP HEALTH CHECK ───
+      try {
+        const integrity = db.db.pragma('integrity_check');
+        if (integrity[0]?.integrity_check !== 'ok') {
+          console.error('[BOOT] DATABASE INTEGRITY CHECK FAILED:', integrity);
+          db.audit('boot.health', 'DB integrity check FAILED');
+        } else {
+          console.log('[BOOT] DB integrity: ok');
+        }
+      } catch (e) {
+        console.error('[BOOT] DB health check error:', e.message);
+      }
+      const memUsage = process.memoryUsage();
+      console.log(`[BOOT] Memory: ${Math.round(memUsage.rss / 1024 / 1024)}MB RSS, ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB heap`);
+
       db.audit('ready', `WhatsApp connected (Baileys). Model: ${config.model.id}`);
       cronEngine.start();
 
@@ -3106,7 +3156,7 @@ Provide a detailed, well-structured analysis. Use markdown formatting.`;
         reply = `*[Gemini Analyst]*\n\n${geminiResult}`;
         modelUsed = 'gemini-analyst';
         // ─── AUTO-SAVE: extract & persist Gemini analyst findings ───
-        autoSaveFindings(userText, geminiResult, 'gemini').catch(() => {});
+        autoSaveFindings(userText, geminiResult, 'gemini').catch(e => console.warn('[AUTO-SAVE] Gemini findings save failed:', e.message));
       } catch (gemErr) {
         console.warn('[ROUTER] Gemini analyst failed, escalating to GPT-4o:', gemErr.message);
         decision.route = 'full';
@@ -3319,7 +3369,7 @@ Run the Bash command NOW.`;
 
     // ─── AUTO-SAVE: extract & persist web search findings ───
     if (toolsUsed.includes('web_search') && reply && reply.length > 50) {
-      autoSaveFindings(userText, reply, 'web_search').catch(() => {});
+      autoSaveFindings(userText, reply, 'web_search').catch(e => console.warn('[AUTO-SAVE] Web search findings save failed:', e.message));
     }
 
     // ─── TELEMETRY ───
@@ -3455,7 +3505,7 @@ Bot replied: ${reply.substring(0, 600)}`;
             ).get(category, `%${item.content.substring(0, 50)}%`);
             if (!existing) {
               const memId = db.save(category, item.content, 'auto-extracted');
-              getEmbedding(item.content).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+              getEmbedding(item.content).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
               console.log(`[MEMORY] Auto-extracted: [${category}] ${item.content.substring(0, 80)}`);
             }
           }
@@ -3599,6 +3649,22 @@ if (config.service.heartbeatIntervalMs > 0) {
   }, config.service.heartbeatIntervalMs);
 }
 
+// ─── MAP CLEANUP (prevent unbounded growth) ───
+setInterval(() => {
+  const now = Date.now();
+  // Cap LID maps to 5000 entries
+  if (lidToPhone.size > 5000) {
+    const keys = [...lidToPhone.keys()];
+    for (let i = 0; i < keys.length - 5000; i++) {
+      const phone = lidToPhone.get(keys[i]);
+      lidToPhone.delete(keys[i]);
+      if (phone) phoneToLid.delete(phone);
+    }
+  }
+  // Clean expired pendingAuth
+  if (pendingAuth.size > 100) pendingAuth.clear();
+}, 3600000); // every hour
+
 // ─── GRACEFUL SHUTDOWN ───
 function shutdown(signal) {
   console.log(`[FAVOR] ${signal} received. Shutting down...`);
@@ -3615,6 +3681,18 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // Prevent EPIPE crashes (broken pipe on console.log when pm2 restarts)
 process.stdout?.on('error', (e) => { if (e.code !== 'EPIPE') throw e; });
 process.stderr?.on('error', (e) => { if (e.code !== 'EPIPE') throw e; });
+
+// ─── GLOBAL EXCEPTION HANDLERS ───
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.message, err.stack);
+  try { db.audit('uncaughtException', err.message); } catch (_) {}
+  setTimeout(() => process.exit(1), 3000);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason);
+  try { db.audit('unhandledRejection', String(reason)); } catch (_) {}
+  setTimeout(() => process.exit(1), 3000);
+});
 
 // ─── LOCAL NOTIFICATION API ───
 // Allows favor-runner and other local processes to push WhatsApp messages
