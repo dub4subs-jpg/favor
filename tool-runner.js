@@ -272,7 +272,7 @@ async function run() {
 
       case 'web_search': {
         // Use execFileSync with argument array — no shell interpolation of user query
-        const claudeEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY'));
+        const claudeEnv = require('./claude-env')();
         const prompt = `Search the web for: ${input.query}. Summarize the top results concisely.`;
         const result = execFileSync('claude', ['-p', prompt, '--allowedTools', 'WebSearch', '--model', 'haiku'], { timeout: 60000, encoding: 'utf8', env: claudeEnv });
         console.log(result.trim());

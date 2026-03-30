@@ -162,9 +162,7 @@ ${factList}`;
 
     try {
       const { execFileSync } = require('child_process');
-      const env = Object.fromEntries(
-        Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY')
-      );
+      const env = require('./claude-env')();
       const raw = execFileSync('claude', ['-p', reviewPrompt, '--model', 'haiku'], {
         timeout: 60000, encoding: 'utf8', env, maxBuffer: 1024 * 1024
       }).trim();

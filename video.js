@@ -204,10 +204,7 @@ class VideoProcessor {
       if (allowedTools) args.push('--allowedTools', allowedTools);
       args.push('-');
 
-      const env = Object.fromEntries(
-        Object.entries({ ...process.env, PATH: `${require('path').dirname(claudeBin)}:${process.env.PATH}` })
-          .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
-      );
+      const env = require('./claude-env')();
 
       const proc = spawn(claudeBin, args, {
         env,

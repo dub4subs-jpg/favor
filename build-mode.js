@@ -8,13 +8,7 @@ const fs = require('fs');
 
 const CLAUDE_BIN = '/root/.local/bin/claude';
 
-// Strip ANTHROPIC_API_KEY so Claude CLI uses Max subscription
-function claudeEnv() {
-  return Object.fromEntries(
-    Object.entries({ ...process.env, PATH: `/root/.local/bin:${process.env.PATH}` })
-      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
-  );
-}
+const claudeEnv = require('./claude-env');
 
 class BuildMode {
   constructor(db) {

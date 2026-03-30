@@ -63,16 +63,10 @@ function isAvailable() {
 
 /**
  * Build a sanitized environment for Claude CLI subprocesses.
- * Strips ANTHROPIC_API_KEY so Claude CLI uses Max/Pro subscription (free).
+ * Uses Max/Pro subscription OAuth token (free) instead of paid API key.
  * @returns {Object} env object
  */
-function claudeEnv() {
-  const binDir = CLAUDE_BIN ? pathModule.dirname(CLAUDE_BIN) : '/root/.local/bin';
-  return Object.fromEntries(
-    Object.entries({ ...process.env, PATH: `${binDir}:${process.env.PATH}` })
-      .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
-  );
-}
+const claudeEnv = require('../claude-env');
 
 /**
  * Run Claude CLI with a prompt via stdin (handles long prompts safely).
