@@ -115,5 +115,11 @@
     "maxRestartAttempts": 10,
     "restartDelayMs": 5000,
     "heartbeatIntervalMs": 1800000
+  },
+  "sandbox": {
+    "enabled": true,
+    "blockedCommands": [],
+    "maxTimeout": 30000,
+    "maxBuffer": 10485760
   }
 }

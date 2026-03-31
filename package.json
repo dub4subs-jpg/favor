@@ -5,7 +5,8 @@
   "description": "Multi-platform AI companion framework with intelligent multi-model routing, persistent memory, and extensible plugin system",
   "scripts": {
     "start": "node favor.js",
-    "test": "jest --verbose"
+    "test": "jest --verbose",
+    "doctor": "node cli/doctor.js"
   },
   "keywords": [
     "ai",

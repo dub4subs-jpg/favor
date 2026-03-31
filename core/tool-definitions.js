@@ -232,4 +232,18 @@ const TOOLS = [
   }),
 ];
 
-module.exports = { TOOLS, oaiTool };
+// ─── TOOL RISK CLASSIFICATION ───
+// Used by sandbox (Phase 1) and MCP server (Phase 3) to determine execution safety.
+// 'dangerous' = goes through sandbox, 'moderate' = monitored, 'safe' = default (no restrictions)
+const TOOL_RISK = {
+  server_exec: 'dangerous',
+  laptop_run_command: 'dangerous',
+  phone_shell: 'dangerous',
+  browser_evaluate: 'dangerous',
+  write_file: 'moderate',
+  laptop_write_file: 'moderate',
+  build_execute: 'moderate',
+  build_raw: 'moderate',
+};
+
+module.exports = { TOOLS, oaiTool, TOOL_RISK };

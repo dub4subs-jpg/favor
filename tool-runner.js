@@ -222,10 +222,10 @@ async function run() {
       // ─── SERVER TOOLS ───
 
       case 'server_exec': {
-        // server_exec intentionally runs arbitrary commands (operator-only tool)
-        const { execSync } = require('child_process');
-        const result = execSync(input.command, { timeout: 30000, encoding: 'utf8', maxBuffer: 1024 * 1024 });
-        console.log(result.trim());
+        const { safExec } = require('./core/sandbox');
+        const result = safExec(input.command, { timeout: 30000, maxBuffer: 1024 * 1024, cwd: '/root' });
+        if (!result.ok) { console.error('Blocked: ' + result.error); process.exit(1); }
+        console.log(result.output.trim());
         break;
       }
       case 'read_file': {

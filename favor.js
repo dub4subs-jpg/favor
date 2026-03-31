@@ -867,12 +867,9 @@ async function executeTool(name, input, context = {}) {
       return removed > 0 ? `Forgot ${removed} item(s)` : 'Nothing found to forget.';
     }
     case 'server_exec': {
-      return new Promise((resolve) => {
-        exec(input.command, { timeout: 15000, cwd: '/root' }, (err, stdout, stderr) => {
-          if (err) resolve('Error: ' + err.message);
-          else resolve((stdout || stderr || '(no output)').trim().substring(0, 3000));
-        });
-      });
+      const { safExec } = require('./core/sandbox');
+      const result = safExec(input.command, { timeout: 15000, cwd: '/root' });
+      return result.ok ? (result.output || '(no output)').trim().substring(0, 3000) : 'Blocked: ' + result.error;
     }
     case 'read_file': {
       try {
