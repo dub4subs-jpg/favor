@@ -199,9 +199,10 @@ class FavorMemory {
 
       if (older.length > 0) {
         const ids = older.map(r => r.id);
+        const placeholders = ids.map(() => '?').join(',');
         this.db.prepare(
-          `UPDATE memories SET status = 'superseded' WHERE id IN (${ids.join(',')})`
-        ).run();
+          `UPDATE memories SET status = 'superseded' WHERE id IN (${placeholders})`
+        ).run(...ids);
         console.log(`[MEMORY] Superseded ${older.length} older memories about "${entity}"`);
       }
       break;
