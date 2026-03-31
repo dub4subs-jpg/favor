@@ -254,10 +254,45 @@ function getClaudeTip() {
   return '\n\n💡 *Tip:* Install Claude Code CLI for much better conversations. Run `curl -fsSL https://claude.ai/install.sh | sh` on your server, then `claude login`. Requires a Claude Pro ($20/mo) or Max ($100/mo) subscription.';
 }
 
-// ─── CLAUDE CLI EXECUTOR (with concurrency limit + partial output recovery) ───
+// ─── CLAUDE CLI EXECUTOR (with concurrency limit, circuit breaker + partial output recovery) ───
 const CLI_MAX_CONCURRENT = 2;
 let _cliRunning = 0;
 const _cliQueue = [];
+
+// ─── CLI CIRCUIT BREAKER ───
+// Trips after consecutive failures to prevent zombie CLI processes from starving the connection
+const CLI_CB_THRESHOLD = 5;       // consecutive failures before tripping
+const CLI_CB_COOLDOWN_MS = 120000; // 2 min cooldown before retrying
+let _cliConsecutiveFailures = 0;
+let _cliCircuitOpen = false;
+let _cliCircuitOpenedAt = 0;
+
+function _cliCircuitCheck() {
+  if (!_cliCircuitOpen) return true;
+  if (Date.now() - _cliCircuitOpenedAt > CLI_CB_COOLDOWN_MS) {
+    console.log('[ROUTER] CLI circuit breaker half-open — testing...');
+    _cliCircuitOpen = false;
+    return true;
+  }
+  return false;
+}
+
+function _cliCircuitRecordSuccess() {
+  _cliConsecutiveFailures = 0;
+  if (_cliCircuitOpen) {
+    _cliCircuitOpen = false;
+    console.log('[ROUTER] CLI circuit breaker closed — CLI recovered');
+  }
+}
+
+function _cliCircuitRecordFailure(err) {
+  _cliConsecutiveFailures++;
+  if (_cliConsecutiveFailures >= CLI_CB_THRESHOLD && !_cliCircuitOpen) {
+    _cliCircuitOpen = true;
+    _cliCircuitOpenedAt = Date.now();
+    console.error(`[ROUTER] CLI circuit breaker OPEN — ${_cliConsecutiveFailures} consecutive failures. Cooling down ${CLI_CB_COOLDOWN_MS / 1000}s. Last error: ${err?.message?.slice(0, 150) || 'unknown'}`);
+  }
+}
 
 function _drainQueue() {
   while (_cliQueue.length > 0 && _cliRunning < CLI_MAX_CONCURRENT) {
@@ -269,6 +304,10 @@ function _drainQueue() {
 function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model } = {}) {
   if (!CLAUDE_AVAILABLE) {
     return Promise.reject(new Error('Claude Code CLI not installed'));
+  }
+  if (!_cliCircuitCheck()) {
+    const remainSec = Math.round((CLI_CB_COOLDOWN_MS - (Date.now() - _cliCircuitOpenedAt)) / 1000);
+    return Promise.reject(new Error(`CLI circuit breaker open — ${remainSec}s until retry`));
   }
   // Use spawn + stdin for long prompts (avoids arg length limits)
   // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
@@ -292,19 +331,32 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
         _cliRunning--;
         _drainQueue();
         const out = stdout.trim() || stderr.trim() || '(no output)';
-        // If timed out (143=SIGTERM) but we got partial output, use it
+        // If timed out (143=SIGTERM) but we got partial output, check if it's usable
         if (code !== 0 && stdout.trim()) {
-          console.warn(`[ROUTER] Claude CLI exited ${code} but had partial output (${stdout.trim().length} chars) — using it`);
-          resolve(stdout.trim().substring(0, 1024 * 1024 * 4));
+          const partial = stdout.trim();
+          const isErrorMsg = /you've hit|rate limit|usage limit|error:|unauthorized|forbidden|not logged in|invalid api key/i.test(partial);
+          if (isErrorMsg) {
+            const err = new Error(partial.slice(0, 500));
+            _cliCircuitRecordFailure(err);
+            reject(err);
+          } else {
+            console.warn(`[ROUTER] Claude CLI exited ${code} but had partial output (${partial.length} chars) — using it`);
+            _cliCircuitRecordSuccess();
+            resolve(partial.substring(0, 1024 * 1024 * 4));
+          }
         } else if (code !== 0) {
-          reject(new Error(stderr.trim() || `exit code ${code}`));
+          const err = new Error(stderr.trim() || `exit code ${code}`);
+          _cliCircuitRecordFailure(err);
+          reject(err);
         } else {
+          _cliCircuitRecordSuccess();
           resolve(out.substring(0, 1024 * 1024 * 4));
         }
       });
       proc.on('error', (err) => {
         _cliRunning--;
         _drainQueue();
+        _cliCircuitRecordFailure(err);
         reject(err);
       });
       proc.stdin.write(prompt);
