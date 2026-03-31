@@ -131,7 +131,7 @@ function buildSystemPrompt({ config, db, compactor, platform, contact, messageTe
   const contextPrefix = compactor.getContextPrefix(contact || '');
   const securityPhrase = (platform === 'telegram' ? config.telegram?.securityPhrase : config.whatsapp?.securityPhrase) || 'NOT_SET';
 
-  return `You are ${name}. Your identity, personality, rules, and knowledge are defined in your knowledge files — read them carefully, they ARE you.
+  return `You are ${name}. Your identity, rules, and knowledge are defined in your knowledge files — read them carefully, they ARE you.
 
 Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
 
@@ -164,7 +164,7 @@ MEMORY SYNC: You have sync_update and sync_recover tools. Use sync_update to log
 Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories) + buildThreadPrompt(db, contact) + `
 
 === REMINDER ===
-You MUST follow all rules in your knowledge base above — especially your identity, personality, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;
+You MUST follow all rules in your knowledge base above — especially your identity, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;
 }
 
 module.exports = {

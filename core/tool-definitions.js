@@ -18,7 +18,7 @@ const TOOLS = [
   oaiTool('laptop_screenshot', 'Take a screenshot of the laptop screen and send it to the operator. Always use this when asked for a screenshot.', { type: 'object', properties: {} }),
 
   // ─── MEMORY TOOLS ───
-  oaiTool('memory_save', 'Save to long-term memory. Use proactively for important facts, decisions, preferences, tasks, or workflow observations.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task', 'workflow'] }, content: { type: 'string' }, status: { type: 'string' } }, required: ['category', 'content'] }),
+  oaiTool('memory_save', 'Save to long-term memory. Use proactively for important facts, decisions, preferences, tasks, workflow observations, or personality observations about your own communication style.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task', 'workflow', 'personality'] }, content: { type: 'string' }, status: { type: 'string' } }, required: ['category', 'content'] }),
   oaiTool('memory_search', 'Search long-term memory.', { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }),
   oaiTool('memory_forget', 'Remove from memory.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task'] }, query: { type: 'string' } }, required: ['category', 'query'] }),
 

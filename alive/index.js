@@ -107,7 +107,7 @@ class AliveEngine {
     if (this.buildSystemPrompt) {
       return this.buildSystemPrompt(this.operatorContact);
     }
-    return `You are ${this.botName}, a WhatsApp AI companion. Be natural, warm, and concise.`;
+    return `You are ${this.botName}, a WhatsApp AI companion. Be concise.`;
   }
 
   toJid(contact) {

@@ -25,7 +25,7 @@ class Checkins {
         JSON.stringify({
           type: 'alive:checkin',
           style: 'morning',
-          prompt: 'Good morning check-in. Be warm but brief. Mention one thing from memory that\'s relevant today — a pending task, something they mentioned yesterday, or an upcoming deadline. If nothing specific, share a quick motivational thought or interesting observation. Keep it to 2-3 sentences max. Feel natural, not robotic.'
+          prompt: 'Good morning check-in. Mention one thing from memory that\'s relevant today — a pending task, something they mentioned yesterday, or an upcoming deadline. If nothing specific, share a quick thought or interesting observation. Keep it to 2-3 sentences max.'
         })
       );
       created.push('morning_checkin');

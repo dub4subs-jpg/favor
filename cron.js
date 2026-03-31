@@ -62,7 +62,7 @@ class CronEngine {
       `daily ${time}`,
       JSON.stringify({
         type: 'proactive',
-        prompt: 'Give your operator a morning briefing. Check pending tasks, upcoming deadlines, and anything important from memory. Keep it warm and motivating. Start with a greeting that fits the time of day.'
+        prompt: 'Give your operator a morning briefing. Check pending tasks, upcoming deadlines, and anything important from memory. Keep it brief. Start with a greeting that fits the time of day.'
       })
     );
   }

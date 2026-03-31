@@ -380,6 +380,63 @@ else
 fi
 USE_DESCRIPTION="${USE_DESCRIPTION:-A general purpose AI assistant}"
 
+# ─── Personality seeds ───
+echo ""
+echo "  Pick 3 personality seeds for ${BOT_NAME}."
+echo "  These are starting traits — ${BOT_NAME} will develop its own personality over time."
+echo ""
+echo "    1) Direct        5) Witty         9) Chill"
+echo "    2) Honest        6) Professional  10) Bold"
+echo "    3) Helpful        7) Warm         11) Curious"
+echo "    4) Friendly       8) Playful      12) Calm"
+echo ""
+echo "  Or type your own (comma-separated, e.g. 'loyal, sharp, fun')"
+echo ""
+read -p "  Enter 3 numbers or custom seeds (default: 1,2,3): " SEED_INPUT
+SEED_INPUT="${SEED_INPUT:-1,2,3}"
+
+# Map numbers to seed names
+SEED_MAP=("" "Direct" "Honest" "Helpful" "Friendly" "Witty" "Professional" "Warm" "Playful" "Chill" "Bold" "Curious" "Calm")
+SEEDS=""
+IFS=',' read -ra SEED_PARTS <<< "$SEED_INPUT"
+for part in "${SEED_PARTS[@]}"; do
+    part=$(echo "$part" | xargs)  # trim whitespace
+    if [[ "$part" =~ ^[0-9]+$ ]] && [ "$part" -ge 1 ] && [ "$part" -le 12 ]; then
+        SEEDS="${SEEDS:+$SEEDS, }${SEED_MAP[$part]}"
+    elif [ -n "$part" ]; then
+        SEEDS="${SEEDS:+$SEEDS, }${part}"
+    fi
+done
+SEEDS="${SEEDS:-Direct, Honest, Helpful}"
+echo "  [✓] Seeds: ${SEEDS}"
+
+# Write seeds into soul.md
+SOUL_FILE="./knowledge/soul.md"
+if [ -f "$SOUL_FILE" ]; then
+    # Replace the default seeds line with user's chosen seeds
+    SEED_LINES=""
+    IFS=',' read -ra FINAL_SEEDS <<< "$SEEDS"
+    for s in "${FINAL_SEEDS[@]}"; do
+        s=$(echo "$s" | xargs)
+        SEED_LINES="${SEED_LINES}- ${s}\n"
+    done
+    sed -i "s/^You are direct, honest, and helpful\./You are $(echo "$SEEDS" | sed 's/, /, /g' | sed 's/, \([^,]*\)$/, and \1/' | tr '[:upper:]' '[:lower:]')./" "$SOUL_FILE"
+fi
+
+# Write seeds into evolution.md
+EVOLUTION_FILE="./knowledge/evolution.md"
+if [ -f "$EVOLUTION_FILE" ]; then
+    # Replace default seeds block
+    SEED_BLOCK=""
+    IFS=',' read -ra FINAL_SEEDS <<< "$SEEDS"
+    for s in "${FINAL_SEEDS[@]}"; do
+        s=$(echo "$s" | xargs)
+        SEED_BLOCK="${SEED_BLOCK}- ${s}\n"
+    done
+    sed -i "/^### Seeds/,/^### Discovered/{/^- /d}" "$EVOLUTION_FILE"
+    sed -i "/^### Seeds (starting point)/a\\${SEED_BLOCK}" "$EVOLUTION_FILE"
+fi
+
 # Defaults (will be overridden by AI if OpenAI key is available)
 BUSINESS_TAGLINE="Always in your favor."
 BOT_TONE="friendly, helpful, direct"

@@ -3048,7 +3048,7 @@ ${recentHistory}
 The operator just sent an image. Read the image file at: ${imgPath}
 Their message: ${body || 'What do you see in this image?'}
 
-Analyze the image and respond naturally. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
+Analyze the image and respond naturally. Respond as ${name}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 90000, { imagePath: imgPath });
         reply = cliResult;
         modelUsed = 'claude-cli-vision';
@@ -3104,7 +3104,7 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 === CONVERSATION ===
 ${recentHistory}
 
-Respond to the latest message. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
+Respond to the latest message. Respond as ${name}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 180000, { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
@@ -3113,7 +3113,7 @@ Respond to the latest message. Be yourself — follow your identity, personality
         console.warn('[ROUTER] Claude CLI attempt 1 failed for chat/full:', cliErr.message);
         // Retry with simplified prompt — do NOT fall back to GPT-4o
         try {
-          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
+          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Respond as ${name}.`;
           const cliResult = await runClaudeCLI(retryPrompt, 180000);
           reply = cliResult;
           modelUsed = 'claude-cli';
@@ -3202,7 +3202,7 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 === CONVERSATION ===
 ${recentHistoryMini}
 
-Respond briefly and directly. Be yourself — follow your identity, personality, and rules from your knowledge files.`;
+Respond briefly and directly. Respond as ${name}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 30000, { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
