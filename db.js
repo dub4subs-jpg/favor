@@ -166,9 +166,46 @@ class FavorMemory {
 
   // ─── MEMORY ───
   save(category, content, status, embedding = null, contact = null) {
+    // Supersede conflicting decisions about the same entity
+    if (category === 'decision' || category === 'fact') {
+      this._supersedeConflicts(content);
+    }
     const stmt = this.db.prepare('INSERT INTO memories (category, content, status, embedding, contact) VALUES (?, ?, ?, ?, ?)');
     stmt.run(category, content, status || null, embedding ? JSON.stringify(embedding) : null, contact || null);
     return this.db.prepare('SELECT last_insert_rowid() as id').get().id;
+  }
+
+  // ─── MEMORY SUPERSESSION ───
+  // When saving a new memory about a specific entity (invoice, task, etc.),
+  // mark older conflicting memories as 'superseded' so they don't surface
+  _supersedeConflicts(content) {
+    const entityPatterns = [
+      /\b(invoice\s*#?\d+)/i,
+      /\b(task\s*#?\d+)/i,
+      /\b(pr\s*#?\d+)/i,
+      /\b(ticket\s*#?\d+)/i,
+      /\b(order\s*#?\d+)/i,
+      /\b(issue\s*#?\d+)/i,
+    ];
+
+    for (const pattern of entityPatterns) {
+      const match = content.match(pattern);
+      if (!match) continue;
+
+      const entity = match[1];
+      const older = this.db.prepare(
+        "SELECT id FROM memories WHERE LOWER(content) LIKE ? AND status IS NOT 'resolved' AND status IS NOT 'superseded' ORDER BY created_at DESC LIMIT 20"
+      ).all(`%${entity.toLowerCase()}%`);
+
+      if (older.length > 0) {
+        const ids = older.map(r => r.id);
+        this.db.prepare(
+          `UPDATE memories SET status = 'superseded' WHERE id IN (${ids.join(',')})`
+        ).run();
+        console.log(`[MEMORY] Superseded ${older.length} older memories about "${entity}"`);
+      }
+      break;
+    }
   }
 
   // ─── PER-CONTACT MEMORY ───
@@ -204,15 +241,17 @@ class FavorMemory {
 
   search(query) {
     // BM25-style keyword ranking: score by term frequency + recency
+    // Excludes superseded/resolved memories so stale info doesn't surface
+    const statusFilter = "AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))";
     const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
     if (!terms.length) {
-      const stmt = this.db.prepare("SELECT * FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT 20");
+      const stmt = this.db.prepare(`SELECT * FROM memories WHERE content LIKE ? ${statusFilter} ORDER BY created_at DESC LIMIT 20`);
       return stmt.all(`%${query}%`);
     }
     // Get all potential matches (any term)
     const conditions = terms.map(() => "LOWER(content) LIKE ?").join(' OR ');
     const params = terms.map(t => `%${t}%`);
-    const rows = this.db.prepare(`SELECT * FROM memories WHERE ${conditions} LIMIT 200`).all(...params);
+    const rows = this.db.prepare(`SELECT * FROM memories WHERE (${conditions}) ${statusFilter} LIMIT 200`).all(...params);
     // Score: term hits + recency boost
     const now = Date.now();
     const scored = rows.map(row => {
@@ -231,7 +270,7 @@ class FavorMemory {
   }
 
   searchSemantic(queryEmbedding, topK = 8) {
-    const rows = this.db.prepare('SELECT id, category, content, status, created_at, embedding FROM memories WHERE embedding IS NOT NULL').all();
+    const rows = this.db.prepare("SELECT id, category, content, status, created_at, embedding FROM memories WHERE embedding IS NOT NULL AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))").all();
     if (!rows.length) return [];
     const now = Date.now();
     const scored = rows.map(row => {
