@@ -30,16 +30,20 @@ function buildMemoryPrompt(db, relevantMemories = []) {
   const preferences = rankMemories(mem.preferences, 20);
   const tasks = mem.tasks.slice(0, 15);
   const workflows = rankMemories(mem.workflows, 10);
+  const ideas = rankMemories(mem.ideas || [], 10);
+  const projectUpdates = rankMemories(mem.project_updates || [], 10);
 
+  if (ideas.length) parts.push('*Ideas:*\n' + ideas.map(i => `- ${i.content}`).join('\n'));
   if (facts.length) parts.push('*Facts:*\n' + facts.map(f => `- ${f.content}`).join('\n'));
   if (decisions.length) parts.push('*Decisions:*\n' + decisions.map(d => `- ${d.content}`).join('\n'));
   if (preferences.length) parts.push('*Preferences:*\n' + preferences.map(p => `- ${p.content}`).join('\n'));
   if (tasks.length) parts.push('*Tasks:*\n' + tasks.map(t => `- [${t.status || '?'}] ${t.content}`).join('\n'));
   if (workflows.length) parts.push('*Workflow Observations:*\n' + workflows.map(w => `- ${w.content}`).join('\n'));
+  if (projectUpdates.length) parts.push('*Project Updates:*\n' + projectUpdates.map(p => `- ${p.content}`).join('\n'));
 
   if (relevantMemories.length) {
     const injected = new Set();
-    for (const cat of [facts, decisions, preferences, tasks, workflows]) {
+    for (const cat of [facts, decisions, preferences, tasks, workflows, ideas, projectUpdates]) {
       for (const m of cat) injected.add(m.id);
     }
     const unique = relevantMemories.filter(r => !injected.has(r.id));

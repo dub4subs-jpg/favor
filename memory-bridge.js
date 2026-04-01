@@ -274,6 +274,17 @@ function scan(db) {
         const category = TYPE_MAP[type] || 'fact';
         const description = meta.description || '';
 
+        // Skip sections pushed by reverse bridge to prevent import loops
+        // Only skip if the ENTIRE file is bot-generated (all sections have marker)
+        // Individual bot entries in mixed files are fine — dedup handles them
+        const botLines = body.split('\n').filter(l => l.includes('(via bot)')).length;
+        const totalLines = body.split('\n').filter(l => l.trim().length > 0).length;
+        if (totalLines > 0 && botLines / totalLines > 0.5) {
+          upsertImport.run(filePath, mtime, name, null);
+          skipped++;
+          continue;
+        }
+
         // Split into individual facts instead of one blob
         const facts = splitIntoFacts(body, name);
 
@@ -361,4 +372,129 @@ function stop() {
   }
 }
 
-module.exports = { init, scan, stop };
+// ── REVERSE BRIDGE: Push high-value bot memories → Claude Code markdown ──
+
+const fsp = fs.promises;
+
+// Serialized write queue — prevents concurrent async writes to same files
+let _writeQueue = Promise.resolve();
+function enqueue(fn) {
+  _writeQueue = _writeQueue.then(fn).catch(e =>
+    console.warn(`[REVERSE-BRIDGE] Queued write failed (non-fatal): ${e.message}`)
+  );
+}
+
+const PUSH_MARKER = '(via bot)';
+
+function getMemoryDir() {
+  // Find the first Claude Code memory directory
+  const dirs = getClaudeMemoryDirs();
+  return dirs.length > 0 ? dirs[0] : null;
+}
+
+async function isDuplicateInFile(filePath, content) {
+  try {
+    const text = await fsp.readFile(filePath, 'utf8');
+    const needle = content.substring(0, 60).toLowerCase();
+    return text.toLowerCase().includes(needle);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function findProjectFile(memDir, content) {
+  try {
+    const files = (await fsp.readdir(memDir)).filter(f => f.startsWith('project_') && f.endsWith('.md'));
+    const lower = content.toLowerCase();
+    for (const file of files) {
+      const name = file.replace('project_', '').replace('.md', '').replace(/_/g, ' ');
+      if (name.length >= 3 && lower.includes(name)) {
+        return path.join(memDir, file);
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function pushIdea(content, detail) {
+  const memDir = getMemoryDir();
+  if (!memDir) return false;
+  const ideasFile = path.join(memDir, 'project_business_ideas.md');
+  try { await fsp.access(ideasFile); } catch (_) {
+    // Create the file if it doesn't exist
+    await fsp.writeFile(ideasFile, '---\nname: Business Ideas\ndescription: App and business ideas\ntype: project\n---\n', 'utf8');
+  }
+  if (await isDuplicateInFile(ideasFile, content)) {
+    console.log(`[REVERSE-BRIDGE] Skipped duplicate idea: ${content.substring(0, 50)}`);
+    return false;
+  }
+
+  const date = new Date().toISOString().split('T')[0];
+  const description = detail ? `${content}. ${detail}` : content;
+  const name = content.split(/[.!?\n]/)[0].replace(/^(User wants to |I want to |We should |Build |Create |Make )/i, '').trim();
+  const entry = `\n\n---\n\n## ${name}\n\n**Date logged:** ${date} ${PUSH_MARKER}\n\n**What:** ${description}\n\n**Status:** IDEA — not started\n`;
+
+  await fsp.appendFile(ideasFile, entry, 'utf8');
+  console.log(`[REVERSE-BRIDGE] Pushed idea to business_ideas: ${name.substring(0, 50)}`);
+  return true;
+}
+
+async function pushProjectUpdate(content) {
+  const memDir = getMemoryDir();
+  if (!memDir) return false;
+  const wipFile = path.join(memDir, 'project_wip.md');
+  const targetFile = (await findProjectFile(memDir, content)) || wipFile;
+  try { await fsp.access(targetFile); } catch (_) { return false; }
+  if (await isDuplicateInFile(targetFile, content)) {
+    console.log(`[REVERSE-BRIDGE] Skipped duplicate update: ${content.substring(0, 50)}`);
+    return false;
+  }
+
+  const date = new Date().toISOString().split('T')[0];
+  const entry = `\n\n### Update (${date}) ${PUSH_MARKER}\n- ${content}\n`;
+  await fsp.appendFile(targetFile, entry, 'utf8');
+  console.log(`[REVERSE-BRIDGE] Pushed project update to ${path.basename(targetFile)}: ${content.substring(0, 50)}`);
+  return true;
+}
+
+async function pushDecision(content, detail) {
+  const memDir = getMemoryDir();
+  if (!memDir) return false;
+  const wipFile = path.join(memDir, 'project_wip.md');
+  try { await fsp.access(wipFile); } catch (_) { return false; }
+  if (await isDuplicateInFile(wipFile, content)) {
+    console.log(`[REVERSE-BRIDGE] Skipped duplicate decision: ${content.substring(0, 50)}`);
+    return false;
+  }
+
+  const date = new Date().toISOString().split('T')[0];
+  const reasoning = detail ? ` — ${detail}` : '';
+  const entry = `\n- **Decision (${date})** ${PUSH_MARKER}: ${content}${reasoning}\n`;
+  await fsp.appendFile(wipFile, entry, 'utf8');
+  console.log(`[REVERSE-BRIDGE] Pushed decision to wip: ${content.substring(0, 50)}`);
+  return true;
+}
+
+/**
+ * Push a high-value memory to Claude Code's markdown memory system.
+ * Non-blocking — enqueues writes so they don't block the event loop.
+ * @param {string} category - 'idea' | 'project_update' | 'decision'
+ * @param {string} content - The memory content
+ * @param {string|null} detail - Optional elaboration (for ideas/decisions)
+ */
+function push(category, content, detail) {
+  enqueue(async () => {
+    switch (category) {
+      case 'idea':
+        return pushIdea(content, detail);
+      case 'project_update':
+        return pushProjectUpdate(content);
+      case 'decision':
+        return pushDecision(content, detail);
+      default:
+        return false;
+    }
+  });
+}
+
+module.exports = { init, scan, stop, push };

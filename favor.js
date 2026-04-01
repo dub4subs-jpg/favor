@@ -3448,13 +3448,25 @@ Run the Bash command NOW.`;
             : '';
 
           const extractPrompt = `Extract key information from this conversation. Return ONLY valid JSON:
-{"facts":[{"category":"fact|preference|decision","content":"concise fact"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"${activeEntries ? ',"resolved":[1,2]' : ''}}
+{"facts":[{"category":"fact|preference|decision|idea|project_update|task","content":"concise fact","detail":"optional elaboration for ideas/decisions"}],"directives":[{"rule":"permanent rule","context":"why"}],"entities":[{"name":"Name","type":"person|company|product|project|location","metadata":{}}],"relationships":[{"from":"Entity A","to":"Entity B","type":"works_at|supplies|owns|knows|uses","context":"brief context"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"${activeEntries ? ',"resolved":[1,2]' : ''}}
 
 Rules:
-- facts: 0-3 key facts worth remembering (preferences, decisions, plans). Skip greetings/small talk.
+- facts: 0-3 key facts worth remembering. Skip greetings/small talk. Categories:
+  - "idea" — app concepts, business ideas, product concepts, side projects. Signals: "I want to build", "what about an app that", "we should make", "idea for", "what if we"
+  - "project_update" — status changes on known projects. Signals: "X is done", "paused X", "launched X", "killed X", "X is live now"
+  - "decision" — a concrete choice between options. Signals: "let's go with", "use X not Y", "decided on", "switching to"
+  - "task" — action items or reminders. Signals: "remind me", "need to", "send the", "schedule"
+  - "fact" — knowledge, contacts, numbers, dates, addresses, technical info
+  - "preference" — behavioral or stylistic preferences. Signals: "always", "never", "I like", "I prefer"
+  For ideas: content = the concept name, detail = what it does / who it's for / why it's interesting (1-2 sentences)
+  For decisions: detail = brief reasoning if given
+  "detail" is optional — omit for facts/preferences/tasks
+- directives: 0-2 STANDING ORDERS from the operator — permanent rules like "never do X", "always do Y", "stop doing Z", "from now on...", "don't ever...". Only real commands, not casual preferences.
+- entities: people, companies, products, projects mentioned. Include metadata like role/title if apparent.
+- relationships: connections between entities. Only include if clearly stated.
 - journal: ALWAYS provide a 1-line summary (max 150 chars) of what this exchange was about. Include specific names, numbers, prices, file paths if mentioned.
 - journal_category: "decision" if a choice was made, "task" if work was requested, "pending" if a question is unanswered, otherwise "exchange"
-- If nothing worth saving for facts, return empty array but STILL provide journal.${resolveSection}
+- If nothing worth saving for facts, return empty arrays but STILL provide journal.${resolveSection}
 
 User said: ${(body || '').substring(0, 600)}
 Bot replied: ${reply.substring(0, 600)}`;
@@ -3496,14 +3508,46 @@ Bot replied: ${reply.substring(0, 600)}`;
           const facts = Array.isArray(parsed) ? parsed : (parsed.facts || []);
           for (const item of facts.slice(0, 3)) {
             if (!item.content || item.content.length < 10) continue;
-            const category = ['fact', 'preference', 'decision'].includes(item.category) ? item.category : 'fact';
+            // Never save internal routing/mode state as memories
+            if (/\b(chat mode|agent mode|tool access|no tools|limited mode|without tools)\b/i.test(item.content)) {
+              console.log(`[MEMORY] Skipped internal-state memory: ${item.content.substring(0, 60)}`);
+              continue;
+            }
+            const category = ['fact', 'preference', 'decision', 'idea', 'project_update', 'task'].includes(item.category) ? item.category : 'fact';
             const existing = db.db.prepare(
               'SELECT id FROM memories WHERE category = ? AND content LIKE ? LIMIT 1'
             ).get(category, `%${item.content.substring(0, 50)}%`);
             if (!existing) {
-              const memId = db.save(category, item.content, 'auto-extracted');
+              const status = category === 'task' ? 'pending' : 'auto-extracted';
+              const memId = db.save(category, item.content, status);
               getEmbedding(item.content).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
               console.log(`[MEMORY] Auto-extracted: [${category}] ${item.content.substring(0, 80)}`);
+            }
+          }
+
+          // ─── REVERSE BRIDGE: Push high-value memories to Claude Code ───
+          const highValueItems = facts.filter(item =>
+            ['idea', 'project_update', 'decision'].includes(item.category) &&
+            item.content && item.content.length >= 10
+          );
+          if (highValueItems.length > 0) {
+            try {
+              for (const item of highValueItems) {
+                memoryBridge.push(item.category, item.content, item.detail || null);
+              }
+            } catch (e) {
+              console.warn('[REVERSE-BRIDGE] Push failed (non-fatal):', e.message);
+            }
+          }
+
+          // ─── AUTO-DETECT STANDING DIRECTIVES ───
+          if (parsed.directives && Array.isArray(parsed.directives)) {
+            for (const d of parsed.directives.slice(0, 2)) {
+              if (!d || typeof d.rule !== 'string' || d.rule.length < 8) continue;
+              if (typeof db.saveDirective === 'function') {
+                const id = db.saveDirective(d.rule, d.context || null);
+                console.log(`[DIRECTIVE] Auto-extracted: #${id} "${d.rule.substring(0, 80)}"`);
+              }
             }
           }
         } catch (_) { /* non-fatal */ }

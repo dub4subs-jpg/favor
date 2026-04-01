@@ -1,4 +1,4 @@
-// reflect.js — Self-Improvement Loop for DellV2/Favor
+// reflect.js — Self-Improvement Loop for Favor
 // Analyzes recent interactions, extracts behavioral lessons, stores them for future use.
 // Runs every 6 hours via setInterval (scheduled in favor.js).
 
@@ -98,7 +98,7 @@ async function reflect(db, problems, stats, auditErrors) {
   const activeLessons = db.getAllActiveLessons();
 
   // Build the reflection prompt
-  const prompt = `You are analyzing DellV2's recent WhatsApp bot interactions to extract behavioral lessons that will make the bot better over time.
+  const prompt = `You are analyzing the bot's recent interactions to extract behavioral lessons that will make the bot better over time.
 
 === PERFORMANCE STATS (last ${WINDOW_HOURS} hours) ===
 Total interactions: ${stats.total}

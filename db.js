@@ -167,7 +167,7 @@ class FavorMemory {
   // ─── MEMORY ───
   save(category, content, status, embedding = null, contact = null) {
     // Supersede conflicting decisions about the same entity
-    if (category === 'decision' || category === 'fact') {
+    if (category === 'decision' || category === 'fact' || category === 'project_update') {
       this._supersedeConflicts(content);
     }
     const stmt = this.db.prepare('INSERT INTO memories (category, content, status, embedding, contact) VALUES (?, ?, ?, ?, ?)');
@@ -320,7 +320,7 @@ class FavorMemory {
   }
 
   getAllMemories() {
-    const categories = ['fact', 'decision', 'preference', 'task', 'workflow'];
+    const categories = ['fact', 'decision', 'preference', 'task', 'workflow', 'idea', 'project_update'];
     const result = {};
     for (const cat of categories) {
       result[cat + 's'] = this.getByCategory(cat);
