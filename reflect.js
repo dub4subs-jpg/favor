@@ -1,6 +1,7 @@
 // reflect.js — Self-Improvement Loop for Favor
 // Analyzes recent interactions, extracts behavioral lessons, stores them for future use.
-// Runs every 6 hours via setInterval (scheduled in favor.js).
+// NOTE: Not yet wired into favor.js. Requires db.getAllActiveLessons(), db.saveLesson(),
+// db.logReflection() to be implemented in db.js before activation.
 
 const { runClaudeCLI } = require('./router');
 

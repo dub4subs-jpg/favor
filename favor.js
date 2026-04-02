@@ -107,8 +107,10 @@ if (PLATFORM === 'whatsapp') {
   console.log('[PLATFORM] WhatsApp (Baileys)');
 } else if (PLATFORM === 'telegram') {
   console.log('[PLATFORM] Telegram');
+} else if (PLATFORM === 'evolution') {
+  console.log('[PLATFORM] Evolution API');
 } else {
-  console.error(`[PLATFORM] Unknown platform: ${PLATFORM}. Use 'whatsapp' or 'telegram'.`);
+  console.error(`[PLATFORM] Unknown platform: ${PLATFORM}. Use 'whatsapp', 'telegram', or 'evolution'.`);
   process.exit(1);
 }
 
@@ -258,7 +260,7 @@ if (config.alive?.enabled !== false) {
     operatorContact: PLATFORM === 'telegram'
       ? `tg_${config.telegram?.operatorChatId || ''}`
       : (config.whatsapp?.operatorNumber?.replace('+', '') || ''),
-    botName: config.identity.name || 'Favor',
+    botName: config.identity?.name || 'Favor' || 'Favor',
     morningHourUTC: toUTC(morningLocal),
     eveningHourUTC: toUTC(eveningLocal),
     callbackIntervalHours: aliveConfig.memoryCallbackHours ?? 8,
@@ -1303,6 +1305,10 @@ ${pageContent}`;
     case 'knowledge_search': {
       try {
         const { execSync } = require('child_process');
+        // Check if qmd is available before attempting search
+        try { execSync('which qmd', { encoding: 'utf8', timeout: 3000 }); } catch (_) {
+          return 'knowledge_search is not available — qmd is not installed. Use memory_search instead.';
+        }
         const n = input.num_results || 5;
         const query = input.query.replace(/'/g, "'\\''");
         const result = execSync(
@@ -1870,7 +1876,7 @@ Be concise. 1-2 sentences per section max. Previous context (avoid repeating): "
 
 // ─── BAILEYS WHATSAPP ───
 // Use OpenClaw's credential store so no QR re-scan needed
-const AUTH_DIR = config.whatsapp?.credentialsDir || '/root/whatsapp-bot/auth-state';
+const AUTH_DIR = config.whatsapp?.credentialsDir || path.join(__dirname, 'auth-state');
 let sock;
 let restartAttempts = 0;
 
@@ -1944,7 +1950,7 @@ async function startWhatsApp() {
       }
       const counts = db.getMemoryCount();
       const cronCount = db.getActiveCrons().length;
-      console.log(`[FAVOR] ${config.identity.name} is online (Baileys)`);
+      console.log(`[FAVOR] ${config.identity?.name || 'Favor'} is online (Baileys)`);
       console.log(`[FAVOR] Model: ${config.model.id}`);
       console.log(`[FAVOR] Memories: ${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T`);
       console.log(`[FAVOR] Active crons: ${cronCount}`);
@@ -2072,7 +2078,7 @@ async function startWhatsApp() {
         console.error('[WHATSAPP] Session invalidated (401). Clearing credentials for fresh start...');
         db.audit('logged_out', 'Session invalidated (401) — clearing credentials');
         // Clear stale credentials to prevent 440 reconnect loop
-        const credDir = config.whatsapp?.credentialsDir || '/root/whatsapp-bot/auth-state';
+        const credDir = config.whatsapp?.credentialsDir || path.join(__dirname, 'auth-state');
         try {
           if (fs.existsSync(credDir)) {
             const files = fs.readdirSync(credDir);
@@ -2139,7 +2145,7 @@ async function startTelegram() {
 
       const counts = db.getMemoryCount();
       const cronCount = db.getActiveCrons().length;
-      console.log(`[FAVOR] ${config.identity.name} is online (Telegram: @${botInfo.username})`);
+      console.log(`[FAVOR] ${config.identity?.name || 'Favor'} is online (Telegram: @${botInfo.username})`);
       console.log(`[FAVOR] Model: ${config.model.id}`);
       console.log(`[FAVOR] Memories: ${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T`);
       console.log(`[FAVOR] Active crons: ${cronCount}`);
@@ -2661,7 +2667,7 @@ async function handleMessage(msg) {
       const topicCount = db.getTopics(jid).length;
       const summaryCount = db.getCompactionSummaries(jid).length;
       await sock.sendMessage(jid, { text:
-        `*${config.identity.name} — Status*\n` +
+        `*${config.identity?.name || 'Favor'} — Status*\n` +
         `Model: ${config.model.id}\n` +
         `Uptime: ${hrs}h ${mins}m\n` +
         `Messages: ${messages.length}\n` +
@@ -2809,7 +2815,7 @@ async function handleMessage(msg) {
 
     if (cmd === '/help') {
       await sock.sendMessage(jid, { text:
-        `*${config.identity.name} — Commands*\n\n` +
+        `*${config.identity?.name || 'Favor'} — Commands*\n\n` +
         `/status — System status\n` +
         `/memory — View memories\n` +
         `/brain — Knowledge files\n` +
@@ -2909,7 +2915,7 @@ async function handleMessage(msg) {
     }
 
     // Send typing indicator
-    await sock.presenceSubscribe(jid);
+    if (typeof sock.presenceSubscribe === 'function') await sock.presenceSubscribe(jid);
     await sock.sendPresenceUpdate('composing', jid);
 
     // Auto-recall relevant memories for this message (non-fatal)
@@ -3048,7 +3054,7 @@ ${recentHistory}
 The operator just sent an image. Read the image file at: ${imgPath}
 Their message: ${body || 'What do you see in this image?'}
 
-Analyze the image and respond naturally. Respond as ${name}.`;
+Analyze the image and respond naturally. Respond as ${config.identity?.name || 'Favor'}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 90000, { imagePath: imgPath });
         reply = cliResult;
         modelUsed = 'claude-cli-vision';
@@ -3097,14 +3103,13 @@ Be concise. Return your analysis/solution directly.`;
 You can take actions via Bash commands:
 - Send WhatsApp message: curl -s -X POST http://localhost:3099/send -H 'Content-Type: application/json' -d '{"to":"+1XXXXXXXXXX","message":"your message"}'
 - Send email: python3 send-gmail.py <to> <subject> <body> [attachment]
-- Search bot memory: curl -s http://localhost:3099/memory-search?q=query (if available)
 - Run server commands: any bash command
 When you need to message someone, USE these tools. Do NOT say you can't send messages.
 
 === CONVERSATION ===
 ${recentHistory}
 
-Respond to the latest message. Respond as ${name}.`;
+Respond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 180000, { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
@@ -3113,7 +3118,7 @@ Respond to the latest message. Respond as ${name}.`;
         console.warn('[ROUTER] Claude CLI attempt 1 failed for chat/full:', cliErr.message);
         // Retry with simplified prompt — do NOT fall back to GPT-4o
         try {
-          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Respond as ${name}.`;
+          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
           const cliResult = await runClaudeCLI(retryPrompt, 180000);
           reply = cliResult;
           modelUsed = 'claude-cli';
@@ -3202,7 +3207,7 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 === CONVERSATION ===
 ${recentHistoryMini}
 
-Respond briefly and directly. Respond as ${name}.`;
+Respond briefly and directly. Respond as ${config.identity?.name || 'Favor'}.`;
         const cliResult = await runClaudeCLI(cliPrompt, 30000, { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
@@ -3212,7 +3217,7 @@ Respond briefly and directly. Respond as ${name}.`;
       }
 
       // Fall back to gpt-4o-mini with tools if Claude CLI failed
-      if (!reply) {
+      if (!reply && openai) {
         let miniResponse = await openai.chat.completions.create({
           model: 'gpt-4o-mini',
           max_tokens: 1024,
@@ -3304,7 +3309,7 @@ Run the Bash command NOW.`;
     }
 
     // ─── ROUTE: tool / hybrid / agent — GPT-4o fallback (if Claude CLI failed) ───
-    if (!reply && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent')) {
+    if (!reply && openai && (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent')) {
       // First call: GPT-4o (full reasoning with all context)
       let response = await openai.chat.completions.create({
         model: config.model.id,
@@ -3419,7 +3424,7 @@ Run the Bash command NOW.`;
     // ─── GUARDIAN: Track API usage ───
     guardian.trackUsage(jid, modelUsed || config.model.id, 0, reply.length, decision?.route || 'full');
 
-    console.log(`[${new Date().toLocaleTimeString()}] ${config.identity.name} replied (${reply.length} chars${topicId ? `, topic #${topicId}` : ''})`);
+    console.log(`[${new Date().toLocaleTimeString()}] ${config.identity?.name || 'Favor'} replied (${reply.length} chars${topicId ? `, topic #${topicId}` : ''})`);
 
     // Sync: message handled successfully
     syncBot.sync('bot', {
@@ -3629,6 +3634,7 @@ Your reply: ${reply.substring(0, 500)}`;
       db.audit('session_sanitized', `Auto-sanitized broken tool_call history for ${jid}`);
       try {
         const { messages: fixedHistory, topicId: fixedTopicId } = getHistory(jid);
+        if (!openai) throw new Error('OpenAI not configured');
         const retryResponse = await openai.chat.completions.create({
           model: config.model.id,
           max_tokens: config.model.maxTokens,
@@ -3645,7 +3651,7 @@ Your reply: ${reply.substring(0, 500)}`;
       }
     }
 
-    if (config.fallbackModel && !err._fallbackAttempted) {
+    if (config.fallbackModel && !err._fallbackAttempted && openai) {
       console.log(`[FALLBACK] Trying ${config.fallbackModel.id}...`);
       try {
         const { messages: history, topicId } = getHistory(jid);
@@ -3810,8 +3816,9 @@ const notifyServer = http.createServer((req, res) => {
           await sock.sendMessage(OPERATOR_JID, { image: result.buffer, caption: 'Laptop Screenshot' });
           res.writeHead(200); res.end('sent');
         } else if (action === 'phone_screenshot') {
+          // phone_screenshot requires ADB phone integration (configure phone section in config.json)
           const imgResult = await executeTool('phone_screenshot', {}, { contact: OPERATOR_JID });
-          res.writeHead(200); res.end(imgResult || 'done');
+          res.writeHead(200); res.end(imgResult || 'phone_screenshot not configured — add phone settings to config.json');
         } else {
           const toolResult = await executeTool(action, args || {}, { contact: OPERATOR_JID });
           res.writeHead(200); res.end(String(toolResult || 'done'));
@@ -3905,8 +3912,8 @@ notifyServer.listen(NOTIFY_PORT, '127.0.0.1', () => {
 });
 
 // ─── START ───
-console.log(`[FAVOR] Starting ${config.identity.name} v${require('./package.json').version}...`);
-console.log(`[FAVOR] "${config.identity.tagline}"`);
+console.log(`[FAVOR] Starting ${config.identity?.name || 'Favor'} v${require('./package.json').version}...`);
+console.log(`[FAVOR] "${config.identity?.tagline || ''}"`);
 console.log(`[FAVOR] Features: vision | voice | topics | crons | compaction | proactive | alive`);
 
 // Claude CLI availability check

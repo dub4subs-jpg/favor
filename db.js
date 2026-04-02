@@ -124,14 +124,22 @@ class FavorMemory {
           );
         `);
       },
-      // v4: Add router_telemetry table
+      // v4: Add router_telemetry table (schema matches router.js inserts)
       () => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS router_telemetry (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            route TEXT, model TEXT, success INTEGER DEFAULT 1,
-            tools_used TEXT, latency_ms INTEGER,
-            timestamp TEXT DEFAULT (datetime('now'))
+            contact TEXT,
+            route TEXT,
+            escalation_score INTEGER,
+            model_used TEXT,
+            tools_used TEXT,
+            needs_review INTEGER,
+            success INTEGER DEFAULT 1,
+            classifier_ms INTEGER,
+            total_ms INTEGER,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
           );
         `);
       },
@@ -147,6 +155,25 @@ class FavorMemory {
             }
           } catch (_) {
             this.db.exec("UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL");
+          }
+        }
+      },
+      // v6: Fix router_telemetry schema — add missing columns for existing installs
+      () => {
+        const cols = this.db.prepare("PRAGMA table_info(router_telemetry)").all().map(c => c.name);
+        const needed = [
+          { name: 'contact', def: 'TEXT' },
+          { name: 'escalation_score', def: 'INTEGER' },
+          { name: 'model_used', def: 'TEXT' },
+          { name: 'needs_review', def: 'INTEGER' },
+          { name: 'classifier_ms', def: 'INTEGER' },
+          { name: 'total_ms', def: 'INTEGER' },
+          { name: 'reason', def: 'TEXT' },
+          { name: 'created_at', def: "TEXT DEFAULT (datetime('now'))" },
+        ];
+        for (const col of needed) {
+          if (!cols.includes(col.name)) {
+            this.db.exec(`ALTER TABLE router_telemetry ADD COLUMN ${col.name} ${col.def}`);
           }
         }
       },

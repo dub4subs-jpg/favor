@@ -39,6 +39,7 @@
     "dmPolicy": "allowlist",
     "operatorNumber": "+1XXXXXXXXXX",
     "securityPhrase": "changeme",
+    "botContacts": [],
     "allowFrom": [
       "+1XXXXXXXXXX"
     ],
@@ -110,6 +111,7 @@
     "maxPerContact": 30,
     "alertThreshold": 0.7
   },
+  "notifyToken": "",
   "service": {
     "autoRestart": true,
     "maxRestartAttempts": 10,

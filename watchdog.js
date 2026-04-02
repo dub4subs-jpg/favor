@@ -16,18 +16,19 @@ const os = require('os');
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
+const BOT_DIR = path.resolve(__dirname);
 const CONFIG = {
-  botDir: '/root/whatsapp-bot',
+  botDir: BOT_DIR,
   pm2Name: 'favor-whatsapp',
   pm2Id: 9,
-  botFile: '/root/whatsapp-bot/favor.js',
-  dbPath: '/root/whatsapp-bot/data/favor.db',
-  configPath: '/root/whatsapp-bot/config.json',
-  credsDir: '/root/whatsapp-bot/auth-state',
-  credsFile: '/root/whatsapp-bot/auth-state/creds.json',
-  credsBackup1: '/root/whatsapp-bot/auth-state/creds.json.bak2',
-  credsBackup2: '/root/whatsapp-bot/auth-state/creds.json.bak',
-  reportsDir: '/root/whatsapp-bot/watchdog-reports',
+  botFile: path.join(BOT_DIR, 'favor.js'),
+  dbPath: path.join(BOT_DIR, 'data', 'favor.db'),
+  configPath: path.join(BOT_DIR, 'config.json'),
+  credsDir: path.join(BOT_DIR, 'auth-state'),
+  credsFile: path.join(BOT_DIR, 'auth-state', 'creds.json'),
+  credsBackup1: path.join(BOT_DIR, 'auth-state', 'creds.json.bak2'),
+  credsBackup2: path.join(BOT_DIR, 'auth-state', 'creds.json.bak'),
+  reportsDir: path.join(BOT_DIR, 'watchdog-reports'),
   notifyUrl: 'http://localhost:3099/notify',
   operatorJid: '', // Set from config.whatsapp.operatorNumber
 
@@ -43,7 +44,7 @@ const CONFIG = {
   memWarnMb: 512,            // memory usage warning threshold (MB)
 
   // Alert cooldowns — critical alerts fire ONCE per process lifetime
-  alertCooldown: Infinity, // send each critical alert exactly once
+  alertCooldown: 3600000, // 1 hour cooldown between repeated alerts
 
   // Known files that should exist in the bot directory (top-level)
   knownFiles: new Set([
@@ -399,8 +400,16 @@ function cleanupDisk() {
 }
 
 function checkDatabase() {
-  // Try a simple sqlite3 query to verify DB is accessible and not corrupted
-  const result = shell(`sqlite3 "${CONFIG.dbPath}" "SELECT COUNT(*) FROM memories;" 2>&1`);
+  // Use better-sqlite3 (already a dependency) instead of sqlite3 CLI
+  let result;
+  try {
+    const Database = require('better-sqlite3');
+    const testDb = new Database(CONFIG.dbPath, { readonly: true });
+    result = String(testDb.prepare('SELECT COUNT(*) AS cnt FROM memories').get().cnt);
+    testDb.close();
+  } catch (e) {
+    result = null;
+  }
 
   if (result === null) {
     error('HEALTH', 'sqlite3 command failed — database may be inaccessible');
@@ -428,11 +437,18 @@ function checkDatabase() {
     warn('HEALTH', `Unexpected DB query result: ${result}`);
   }
 
-  // Quick integrity check
-  const integrity = shell(`sqlite3 "${CONFIG.dbPath}" "PRAGMA integrity_check;" 2>&1`);
-  if (integrity && integrity !== 'ok') {
-    error('HEALTH', `DB integrity check failed: ${integrity.substring(0, 200)}`);
-    sendAlert('db_integrity', `Database integrity check returned: ${integrity.substring(0, 200)}`);
+  // Quick integrity check using better-sqlite3
+  try {
+    const Database = require('better-sqlite3');
+    const testDb = new Database(CONFIG.dbPath, { readonly: true });
+    const integrity = testDb.pragma('integrity_check')[0]?.integrity_check;
+    testDb.close();
+    if (integrity && integrity !== 'ok') {
+      error('HEALTH', `DB integrity check failed: ${(integrity + '').substring(0, 200)}`);
+      sendAlert('db_integrity', `Database integrity check returned: ${(integrity + '').substring(0, 200)}`);
+    }
+  } catch (e) {
+    error('HEALTH', `DB integrity check error: ${e.message}`);
   }
 }
 
@@ -455,8 +471,15 @@ function fixLockedDb() {
     }
   }
 
-  // Force WAL checkpoint
-  shell(`sqlite3 "${CONFIG.dbPath}" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null`);
+  // Force WAL checkpoint using better-sqlite3
+  try {
+    const Database = require('better-sqlite3');
+    const walDb = new Database(CONFIG.dbPath);
+    walDb.pragma('wal_checkpoint(TRUNCATE)');
+    walDb.close();
+  } catch (e) {
+    warn('AUTOFIX', `WAL checkpoint failed: ${e.message}`);
+  }
   state.autoFixes++;
   info('AUTOFIX', 'Database lock fix attempted');
 }
@@ -888,14 +911,14 @@ init();
 //
 // Add to ecosystem.config.js or start with:
 //
-//   pm2 start /root/whatsapp-bot/watchdog.js --name favor-watchdog --max-memory-restart 200M
+//   pm2 start /path/to/favor/watchdog.js --name favor-watchdog --max-memory-restart 200M
 //
 // Full ecosystem entry:
 //
 // {
 //   name: 'favor-watchdog',
-//   script: '/root/whatsapp-bot/watchdog.js',
-//   cwd: '/root/whatsapp-bot',
+//   script: '/path/to/favor/watchdog.js',
+//   cwd: '/path/to/favor',
 //   max_memory_restart: '200M',
 //   autorestart: true,
 //   watch: false,
