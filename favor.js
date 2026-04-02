@@ -23,6 +23,11 @@ const AliveEngine = require('./alive/');
 const syncBot = require('./sync');
 const memoryBridge = require('./memory-bridge');
 const localEmbeddings = require('./embeddings');
+const MessageQueue = require('./message-queue');
+const ToolAudit = require('./tool-audit');
+const AdaptiveTimeouts = require('./adaptive-timeouts');
+const Planner = require('./planner');
+const DellAPI = require('./api');
 const pino = require('pino');
 
 const logger = pino({ level: 'silent' }); // suppress baileys noise
@@ -301,6 +306,26 @@ const compactor = new Compactor(db, {
 
 // ─── CONVERSATION SCRIBE ───
 const scribe = new ConversationScribe(db);
+
+// ─── MESSAGE QUEUE (global concurrency limiter) ───
+const messageQueue = new MessageQueue({ maxConcurrent: config.queue?.maxConcurrent || 3 });
+console.log(`[QUEUE] Message queue initialized (max concurrent: ${messageQueue.maxConcurrent})`);
+
+// ─── TOOL AUDIT (execution checkpoints) ───
+const toolAudit = new ToolAudit(db.db);
+console.log('[AUDIT] Tool audit initialized');
+
+// ─── ADAPTIVE TIMEOUTS ───
+const adaptiveTimeouts = new AdaptiveTimeouts(db.db);
+console.log('[ADAPTIVE] Adaptive timeouts initialized');
+
+// ─── PLANNER (multi-turn plan tracking) ───
+const planner = new Planner(db.db);
+console.log('[PLANNER] Multi-turn planner initialized');
+
+// ─── REST API ───
+const dellAPI = new DellAPI({ db, config, messageQueue, costTracker: typeof costTracker !== 'undefined' ? costTracker : null, guardian, planner });
+dellAPI.start();
 
 // ─── VERSION-AWARE STARTUP MESSAGE ───
 // On first boot after an update, tell the operator what changed in plain language.
@@ -1545,15 +1570,26 @@ ${pageContent}`;
   }
 }
 
-// Wrap executeTool with size cap
+// Wrap executeTool with size cap + audit logging
 const _executeToolRaw = executeTool;
 executeTool = async function(name, input, context = {}) {
-  let result = await _executeToolRaw(name, input, context);
-  if (typeof result === 'string' && result.length > MAX_TOOL_RESULT_LENGTH) {
-    console.warn(`[TOOL] Result from "${name}" truncated: ${result.length} → ${MAX_TOOL_RESULT_LENGTH} chars`);
-    result = result.substring(0, MAX_TOOL_RESULT_LENGTH) + `\n\n[... truncated — full output was ${result.length} chars]`;
+  const auditId = toolAudit.logIntent(name, input, context.contact);
+  const start = Date.now();
+  try {
+    let result = await _executeToolRaw(name, input, context);
+    const isToolError = typeof result === 'string' &&
+      /^Error:|offline|failed|timed out|not configured|ECONNREFUSED|EHOSTUNREACH/i.test(result);
+    toolAudit.logResult(auditId, isToolError ? 'error' : 'success',
+      typeof result === 'string' ? result.substring(0, 500) : 'ok', Date.now() - start);
+    if (typeof result === 'string' && result.length > MAX_TOOL_RESULT_LENGTH) {
+      console.warn(`[TOOL] Result from "${name}" truncated: ${result.length} → ${MAX_TOOL_RESULT_LENGTH} chars`);
+      result = result.substring(0, MAX_TOOL_RESULT_LENGTH) + `\n\n[... truncated — full output was ${result.length} chars]`;
+    }
+    return result;
+  } catch (err) {
+    toolAudit.logResult(auditId, 'error', err.message, Date.now() - start);
+    throw err;
   }
-  return result;
 };
 
 // ─── SYSTEM PROMPT ───
@@ -2835,7 +2871,18 @@ async function handleMessage(msg) {
     }
   }
 
-  // ─── AI CONVERSATION ───
+  // ─── AI CONVERSATION (with global concurrency control) ───
+  const senderTrustForQueue = getTrustLevel(jid);
+  let slot;
+  try {
+    slot = await messageQueue.acquire(senderTrustForQueue, jid);
+  } catch (qErr) {
+    if (qErr.message === 'QUEUE_FULL' || qErr.message === 'QUEUE_TIMEOUT') {
+      console.warn(`[QUEUE] ${qErr.message} for ${jid.split('@')[0]}`);
+      try { await sock.sendMessage(jid, { text: `I'm handling a few things right now — try again in a minute.` }); } catch (_) {}
+    }
+    return;
+  }
   try {
     const { messages: history, topicId } = getHistory(jid);
 
@@ -3670,6 +3717,8 @@ Your reply: ${reply.substring(0, 500)}`;
       }
     }
     await sock.sendMessage(jid, { text: `Something went wrong. Error: ${err.message}` });
+  } finally {
+    if (slot) slot.release();
   }
 }
 

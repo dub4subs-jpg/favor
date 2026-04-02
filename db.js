@@ -177,6 +177,25 @@ class FavorMemory {
           }
         }
       },
+      // v7: Contact profiles for relationship memory
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS contact_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT NOT NULL UNIQUE,
+            display_name TEXT,
+            communication_style TEXT DEFAULT 'neutral',
+            topics TEXT DEFAULT '[]',
+            interaction_summary TEXT DEFAULT '[]',
+            greeting_style TEXT,
+            trust_trend TEXT DEFAULT 'stable',
+            message_count INTEGER DEFAULT 0,
+            last_interaction TEXT DEFAULT (datetime('now')),
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+          )
+        `);
+      },
     ];
 
     // Apply only new migrations
@@ -257,6 +276,40 @@ class FavorMemory {
     const params = terms.map(t => `%${t}%`);
     return this.db.prepare(`SELECT * FROM memories WHERE contact = ? AND (${conditions}) ORDER BY created_at DESC LIMIT ?`)
       .all(contact, ...params, limit);
+  }
+
+  // ─── CONTACT PROFILES (relationship memory) ───
+  getContactProfile(contact) {
+    const row = this.db.prepare('SELECT * FROM contact_profiles WHERE contact = ?').get(contact);
+    if (!row) return null;
+    return { ...row, topics: JSON.parse(row.topics || '[]'), interaction_summary: JSON.parse(row.interaction_summary || '[]') };
+  }
+
+  upsertContactProfile(contact, updates) {
+    const existing = this.db.prepare('SELECT id FROM contact_profiles WHERE contact = ?').get(contact);
+    if (existing) {
+      const sets = [];
+      const vals = [];
+      for (const [k, v] of Object.entries(updates)) {
+        if (['communication_style', 'display_name', 'greeting_style', 'trust_trend'].includes(k)) {
+          sets.push(`${k} = ?`); vals.push(v);
+        } else if (k === 'topics' || k === 'interaction_summary') {
+          sets.push(`${k} = ?`); vals.push(JSON.stringify(v));
+        }
+      }
+      if (sets.length) {
+        sets.push('message_count = message_count + 1');
+        sets.push("last_interaction = datetime('now')");
+        sets.push("updated_at = datetime('now')");
+        this.db.prepare(`UPDATE contact_profiles SET ${sets.join(', ')} WHERE contact = ?`).run(...vals, contact);
+      }
+    } else {
+      this.db.prepare(
+        `INSERT INTO contact_profiles (contact, display_name, communication_style, topics, interaction_summary)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(contact, updates.display_name || null, updates.communication_style || 'neutral',
+            JSON.stringify(updates.topics || []), JSON.stringify(updates.interaction_summary || []));
+    }
   }
 
   updateEmbedding(id, embedding) {
