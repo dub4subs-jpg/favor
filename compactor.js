@@ -40,6 +40,15 @@ class Compactor {
 
     try {
       const summary = await this._summarize(toCompact);
+
+      // Safety: reject summaries that lack real content
+      const trimmed = (summary || '').trim();
+      const contentLines = trimmed.split('\n').filter(l => /[a-zA-Z]{3,}/.test(l));
+      if (!trimmed || contentLines.length < 2) {
+        console.warn(`[COMPACT] Summary lacks real content (${contentLines.length} content lines, ${trimmed.length} chars) — keeping original messages`);
+        return { compacted: false, messages };
+      }
+
       await this._extractFacts(toCompact);
       this.db.saveCompactionSummary(contact, summary, toCompact.length);
       this.db.audit('compaction', `contact=${contact.substring(0, 15)} msgs=${toCompact.length}`);
