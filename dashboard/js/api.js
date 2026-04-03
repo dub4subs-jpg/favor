@@ -3,12 +3,13 @@
 class ApiClient {
   constructor() {
     this.token = localStorage.getItem('favor_token') || '';
-    this.base = window.location.origin;
+    this.base = localStorage.getItem('favor_api_url') || window.location.origin;
     this._connected = false;
     this._listeners = new Set();
   }
 
   setToken(t) { this.token = t; localStorage.setItem('favor_token', t); }
+  setBase(url) { this.base = url.replace(/\/+$/, ''); localStorage.setItem('favor_api_url', this.base); }
   clearToken() { this.token = ''; localStorage.removeItem('favor_token'); }
   hasToken() { return !!this.token; }
   get connected() { return this._connected; }

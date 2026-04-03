@@ -33,13 +33,18 @@ let cleanupApp = null; // stores teardown function for login/logout cycles
 function renderLogin() {
   const root = $('#app');
   const err = h('div', { class: 'login-error' });
-  const input = h('input', { type: 'password', placeholder: 'API token', class: 'login-input',
+  const serverInput = h('input', { type: 'text', placeholder: 'Server URL (e.g. http://your-server:3105)', class: 'login-input',
+    value: localStorage.getItem('favor_api_url') || '', style: { marginBottom: '8px', fontSize: '0.85rem' },
+    onKeyDown: e => { if (e.key === 'Enter') tokenInput.focus(); }});
+  const tokenInput = h('input', { type: 'password', placeholder: 'API token', class: 'login-input',
     onKeyDown: e => { if (e.key === 'Enter') submit(); }});
 
   async function submit() {
-    const t = input.value.trim();
+    const t = tokenInput.value.trim();
     if (!t) { err.textContent = 'Token required'; return; }
     err.textContent = '';
+    const serverUrl = serverInput.value.trim();
+    if (serverUrl) api.setBase(serverUrl);
     api.setToken(t);
     const ok = await api.get('/api/health');
     if (ok) renderApp();
@@ -50,12 +55,13 @@ function renderLogin() {
     h('div', { class: 'login-card' },
       h('div', { class: 'login-logo' },
         h('div', { class: 'login-brand' }, 'favor'),
-        h('div', { class: 'login-sub' }, 'command center')),
+        h('div', { class: 'login-sub' }, 'mission control')),
       h('div', { class: 'login-form' },
-        input,
+        serverInput,
+        tokenInput,
         h('button', { class: 'btn-primary', onClick: submit }, 'Connect'),
         err))));
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => serverInput.value ? tokenInput.focus() : serverInput.focus());
 }
 
 // Main app shell
