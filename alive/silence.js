@@ -15,7 +15,7 @@ class Silence {
     this._lastSilenceCheckin = 0;
     this.SILENCE_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
     this.COOLDOWN_MS = 12 * 60 * 60 * 1000; // Max one per 12h
-    this.WAKING_HOURS = { start: 9, end: 23 }; // EST
+    this.WAKING_HOURS = { start: 9, end: 23 }; // in configured timezone
   }
 
   ensureCrons(existingLabels) {
@@ -40,7 +40,7 @@ class Silence {
     if (Date.now() - this._lastSilenceCheckin < this.COOLDOWN_MS) return;
 
     // Only during waking hours (EST)
-    const estHour = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+    const estHour = new Date().toLocaleString('en-US', { timeZone: this.engine.timezone, hour: 'numeric', hour12: false });
     const hour = parseInt(estHour);
     if (hour < this.WAKING_HOURS.start || hour >= this.WAKING_HOURS.end) return;
 
@@ -102,7 +102,7 @@ class Silence {
 
 [SYSTEM: Silence check-in — operator hasn't messaged in ${silenceHours} hours]
 
-Your operator hasn't messaged you in ${silenceHours} hours. It's ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })} EST.
+Your operator hasn't messaged you in ${silenceHours} hours. It's ${new Date().toLocaleString('en-US', { timeZone: this.engine.timezone, hour: 'numeric', minute: '2-digit', hour12: true })}.
 
 Send a casual, natural check-in. NOT a productivity nudge. Just a "hey, how's it going" vibe. Examples of good tone:
 - "Yo, been quiet today — everything good?"

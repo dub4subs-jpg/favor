@@ -150,7 +150,7 @@ class Checkins {
     // Day/time
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    parts.push(`Current: ${dayNames[now.getDay()]}, ${now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })}`);
+    parts.push(`Current: ${dayNames[now.getDay()]}, ${now.toLocaleString('en-US', { timeZone: this.engine.timezone, hour: 'numeric', minute: '2-digit', hour12: true })}`);
 
     return parts.join('\n\n') || 'No recent context available.';
   }
@@ -224,7 +224,7 @@ class Checkins {
     // Day/time context
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    parts.push(`TODAY: ${dayNames[now.getDay()]}, ${now.toLocaleDateString('en-US', { timeZone: 'America/New_York' })}`);
+    parts.push(`TODAY: ${dayNames[now.getDay()]}, ${now.toLocaleDateString('en-US', { timeZone: this.engine.timezone })}`);
 
     return parts.join('\n\n') || 'No context available for briefing.';
   }

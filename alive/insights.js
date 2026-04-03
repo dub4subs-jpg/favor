@@ -49,7 +49,7 @@ class Insights {
     const systemPrompt = this.engine.getSystemPrompt();
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const timeStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+    const timeStr = now.toLocaleString('en-US', { timeZone: this.engine.timezone, hour: 'numeric', minute: '2-digit', hour12: true });
 
     const prompt = `${systemPrompt}
 
@@ -193,15 +193,12 @@ Rules:
     // 7. Day/time context
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const estTime = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+    const estTime = now.toLocaleString('en-US', { timeZone: this.engine.timezone, hour: 'numeric', minute: '2-digit', hour12: true });
     parts.push(`NOW: ${dayNames[now.getDay()]} ${estTime} EST`);
 
-    // Business rhythm hints
+    // Business rhythm hints (Monday = review day is universal enough to keep)
     const day = now.getDay();
-    const hints = [];
-    if (day === 5) hints.push('Friday — invoice day');
-    if (day === 1) hints.push('Monday — week start, review open items');
-    if (hints.length) parts.push(`RHYTHMS: ${hints.join(', ')}`);
+    if (day === 1) parts.push(`RHYTHMS: Monday — week start, review open items`);
 
     return parts.join('\n\n');
   }

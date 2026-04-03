@@ -34,6 +34,7 @@ class AliveEngine {
     this.eveningHourUTC = opts.eveningHourUTC ?? 2;   // 9 PM EST default
     this.callbackIntervalHours = opts.callbackIntervalHours ?? 8;
     this.morningBriefEnabled = opts.morningBrief !== false; // default true
+    this.timezone = opts.timezone || 'America/New_York';
     this.notifQueue = opts.notifQueue || null;
 
     // Initialize modules
