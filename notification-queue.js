@@ -7,7 +7,9 @@ const { runCLI, isAvailable } = require('./utils/claude');
 function mergeViaAI(items, systemPrompt) {
   if (!isAvailable()) return Promise.reject(new Error('CLI not available'));
   const sources = items.map(it => `[${it.source}] ${it.text}`).join('\n---\n');
-  const prompt = `${systemPrompt || ''}
+  // Use a slim personality extract — full system prompt is too large for a simple merge
+  const voiceSnippet = (systemPrompt || '').substring(0, 1500);
+  const prompt = `${voiceSnippet}
 
 [SYSTEM: Merge these proactive messages into one natural message in YOUR voice.]
 

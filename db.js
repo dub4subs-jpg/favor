@@ -401,9 +401,10 @@ class FavorMemory {
 
   getAllMemories() {
     const categories = ['fact', 'decision', 'preference', 'task', 'workflow', 'idea', 'project_update', 'personality'];
+    const plurals = { personality: 'personalities', project_update: 'project_updates' };
     const result = {};
     for (const cat of categories) {
-      result[cat + 's'] = this.getByCategory(cat);
+      result[plurals[cat] || cat + 's'] = this.getByCategory(cat);
     }
     return result;
   }
