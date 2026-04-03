@@ -41,9 +41,13 @@ function buildMemoryPrompt(db, relevantMemories = []) {
   if (workflows.length) parts.push('*Workflow Observations:*\n' + workflows.map(w => `- ${w.content}`).join('\n'));
   if (projectUpdates.length) parts.push('*Project Updates:*\n' + projectUpdates.map(p => `- ${p.content}`).join('\n'));
 
+  // Personality observations — self-awareness about communication style
+  const personalities = rankMemories(mem.personalities || [], 10);
+  if (personalities.length) parts.push('*Self-Observations (your personality/style):*\n' + personalities.map(p => `- ${p.content}`).join('\n'));
+
   if (relevantMemories.length) {
     const injected = new Set();
-    for (const cat of [facts, decisions, preferences, tasks, workflows, ideas, projectUpdates]) {
+    for (const cat of [facts, decisions, preferences, tasks, workflows, ideas, projectUpdates, personalities]) {
       for (const m of cat) injected.add(m.id);
     }
     const unique = relevantMemories.filter(r => !injected.has(r.id));
