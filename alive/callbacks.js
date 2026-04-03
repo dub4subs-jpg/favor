@@ -58,19 +58,21 @@ class Callbacks {
 
 [SYSTEM: Memory callback]
 
-You remembered something worth bringing up. Here's the memory:
+You found an old memory. Decide if it's worth bringing up RIGHT NOW.
 
 Category: ${candidate.category}
 Saved: ${candidate.created_at}
 Content: ${candidate.content}
 ${candidate.status ? `Status: ${candidate.status}` : ''}
 
-Bring this up naturally in a short message. Connect it to what the operator might be doing now. Examples:
-- "Hey, remember when you mentioned [X]? Just thinking — have you followed up on that?"
-- "That [task] from last week — still on the radar?"
-- "Random thought: you saved [this decision] a while back. Still feeling good about it?"
+RESPOND WITH EXACTLY "SKIP" IF ANY OF THESE ARE TRUE:
+- This is reference info (contacts, phone numbers, addresses, project descriptions, locations) — not actionable
+- This was already discussed or resolved
+- The operator explicitly said to stop/remove/cancel this
+- There's no clear reason to bring it up today
+- You're unsure whether it's relevant
 
-Keep it to 1-3 sentences. Be casual, not formal. If this memory is stale or irrelevant, respond with exactly: SKIP`;
+ONLY message if this is a genuinely forgotten task, an open decision that needs follow-up, or something time-sensitive. If you do message, keep it to 1-2 sentences, casual. Connect it to what the operator might be doing now.`;
 
     let reply = '';
     try {
@@ -101,10 +103,13 @@ Keep it to 1-3 sentences. Be casual, not formal. If this memory is stale or irre
   // Find a memory worth surfacing
   _findCandidate() {
     const db = this.engine.db;
+    const DONE = new Set(['resolved', 'completed', 'done', 'superseded']);
+    const isActive = (m) => !DONE.has((m.status || '').toLowerCase());
 
     // 1. Pending/active tasks (most likely forgotten)
     const tasks = db.getByCategory('task', 20);
     const pending = tasks.filter(t =>
+      isActive(t) &&
       (t.status === 'pending' || t.status === 'active') &&
       !this._isOnCooldown(t.id)
     );
@@ -116,18 +121,19 @@ Keep it to 1-3 sentences. Be casual, not formal. If this memory is stale or irre
     const decisions = db.getByCategory('decision', 20);
     const recent = decisions.filter(d => {
       const age = this._ageDays(d.created_at);
-      return age >= 3 && age <= 14 && !this._isOnCooldown(d.id);
+      return isActive(d) && age >= 3 && age <= 14 && !this._isOnCooldown(d.id);
     });
     if (recent.length) {
       return recent[Math.floor(Math.random() * recent.length)];
     }
 
-    // 3. Facts/workflows from 7-30 days ago
+    // 3. Facts/workflows from 7-30 days ago (skip reference-only data)
     const facts = db.getByCategory('fact', 30);
     const workflows = db.getByCategory('workflow', 20);
+    const REF_PATTERNS = /\b(phone|contact|address|location|website|repo|github|template|system|key contacts)\b/i;
     const older = [...facts, ...workflows].filter(m => {
       const age = this._ageDays(m.created_at);
-      return age >= 7 && age <= 30 && !this._isOnCooldown(m.id);
+      return isActive(m) && age >= 7 && age <= 30 && !this._isOnCooldown(m.id) && !REF_PATTERNS.test(m.content);
     });
     if (older.length) {
       return older[Math.floor(Math.random() * older.length)];

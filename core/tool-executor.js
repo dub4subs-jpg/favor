@@ -112,11 +112,17 @@ function createToolExecutor(deps) {
       case 'memory_search': {
         const results = await semanticSearch(input.query);
         if (!results.length) return 'Nothing found for: ' + input.query;
-        return results.map(r => `[${r.category}] ${r.content}${r.score ? ` (relevance: ${(r.score * 100).toFixed(0)}%)` : ''}`).join('\n');
+        return results.map(r => `[#${r.id} ${r.category}] ${r.content}${r.score ? ` (relevance: ${(r.score * 100).toFixed(0)}%)` : ''}`).join('\n');
       }
       case 'memory_forget': {
         const removed = db.forget(input.category, input.query);
         return removed > 0 ? `Forgot ${removed} item(s)` : 'Nothing found to forget.';
+      }
+      case 'memory_resolve': {
+        const resolveId = Number(input.id);
+        if (!Number.isInteger(resolveId) || resolveId <= 0) return 'Need a valid memory ID (positive integer) to resolve.';
+        const updated = db.db.prepare("UPDATE memories SET status = 'resolved', updated_at = datetime('now') WHERE id = ?").run(resolveId);
+        return updated.changes > 0 ? `Memory #${resolveId} marked as resolved — won't be resurfaced.` : `Memory #${resolveId} not found.`;
       }
       case 'server_exec': {
         const { safExec } = require('../core/sandbox');

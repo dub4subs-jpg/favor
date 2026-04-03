@@ -21,6 +21,7 @@ const TOOLS = [
   oaiTool('memory_save', 'Save to long-term memory. Use proactively for important facts, decisions, preferences, tasks, workflow observations, or personality observations about your own communication style.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task', 'workflow', 'personality'] }, content: { type: 'string' }, status: { type: 'string' } }, required: ['category', 'content'] }),
   oaiTool('memory_search', 'Search long-term memory.', { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }),
   oaiTool('memory_forget', 'Remove from memory.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task'] }, query: { type: 'string' } }, required: ['category', 'query'] }),
+  oaiTool('memory_resolve', 'Mark a memory/task as DONE so it stops being resurfaced. Use this when a task is completed, an invoice is sent, a decision is finalized, or any memory is no longer actionable. Search for the memory first to get its ID.', { type: 'object', properties: { id: { type: 'number', description: 'Memory ID to mark as resolved' } }, required: ['id'] }),
 
   // ─── SERVER TOOLS ───
   oaiTool('server_exec', 'Run a shell command on the server (DigitalOcean droplet).', { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute' } }, required: ['command'] }),
