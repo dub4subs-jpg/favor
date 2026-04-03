@@ -1,6 +1,26 @@
 // notification-queue.js — Smart Notification Batching for Favor
 // Batches proactive messages (alive checkins, callbacks, cron triggers) into single messages
-// when multiple fire within a short window. Urgent messages bypass the queue.
+// when multiple fire within a short window. Uses Claude to merge them naturally.
+
+const { runCLI, isAvailable } = require('./utils/claude');
+
+function mergeViaAI(items) {
+  if (!isAvailable()) return Promise.reject(new Error('CLI not available'));
+  const sources = items.map(it => `[${it.source}] ${it.text}`).join('\n---\n');
+  const prompt = `You are a WhatsApp AI companion about to message your operator. Multiple proactive modules fired at the same time and generated these separate messages:
+
+${sources}
+
+Merge these into ONE natural WhatsApp message. Rules:
+- Weave all the content together conversationally — don't use numbered lists or section headers
+- Keep the tone casual and natural, like one continuous thought
+- If some items overlap or repeat, deduplicate
+- Keep it concise — shorter than the sum of the parts
+- Don't mention that you're combining messages or that multiple systems triggered
+- Just write the merged message directly, nothing else`;
+
+  return runCLI(prompt, { model: 'haiku', timeout: 20000 });
+}
 
 class NotificationQueue {
   constructor(opts = {}) {
@@ -29,7 +49,7 @@ class NotificationQueue {
     q.timer = setTimeout(() => this._flush(contact), this.windowMs);
   }
 
-  _flush(contact) {
+  async _flush(contact) {
     const q = this.queues.get(contact);
     if (!q || !q.items.length) return;
 
@@ -38,11 +58,21 @@ class NotificationQueue {
 
     let text;
     if (items.length === 1) {
-      // Single item — send as-is, no numbering
+      // Single item — send as-is
       text = items[0].text;
     } else {
-      // Multiple items — combine with numbers
-      text = items.map((it, i) => `[${i + 1}] ${it.text}`).join('\n\n');
+      // Multiple items — merge into one natural message via AI
+      console.log(`[NOTIF] Merging ${items.length} messages for ${contact} (sources: ${items.map(i => i.source).join(', ')})`);
+      try {
+        text = await mergeViaAI(items);
+        if (!text || text.length < 10) {
+          text = items.map(it => it.text).join('\n\n');
+        }
+        console.log(`[NOTIF] Merged ${items.length} messages into ${text.length} chars`);
+      } catch (err) {
+        console.warn(`[NOTIF] AI merge failed, falling back to join:`, err.message);
+        text = items.map(it => it.text).join('\n\n');
+      }
     }
 
     if (this.sendFn) this.sendFn(contact, text);
