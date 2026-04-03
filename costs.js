@@ -152,6 +152,20 @@ class CostTracker {
     return { totals, today, week, month, dailyTrend };
   }
 
+  getCostByRoute(days = 7) {
+    try {
+      const rows = this.db.prepare(`
+        SELECT rt.route, COUNT(*) as calls, SUM(ac.cost_usd) as total_cost
+        FROM api_costs ac
+        LEFT JOIN router_telemetry rt ON date(ac.created_at) = date(rt.created_at)
+        WHERE ac.created_at > datetime('now', '-' || ? || ' days')
+        GROUP BY rt.route
+        ORDER BY total_cost DESC
+      `).all(days);
+      return rows;
+    } catch { return []; }
+  }
+
   _calcCost(model, inputTokens, outputTokens) {
     // Normalize model name (OpenAI returns versioned names like gpt-4o-2024-08-06)
     const base = Object.keys(PRICING).find(k => model.startsWith(k)) || model;

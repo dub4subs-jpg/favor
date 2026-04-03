@@ -342,8 +342,18 @@ console.log('[ADAPTIVE] Adaptive timeouts initialized');
 const planner = new Planner(db.db);
 console.log('[PLANNER] Multi-turn planner initialized');
 
-// ─── REST API ───
-const dellAPI = new DellAPI({ db, config, messageQueue, costTracker: typeof costTracker !== 'undefined' ? costTracker : null, guardian, planner });
+// ─── ANALYTICS ───
+let analytics = null;
+try {
+  const Analytics = require('./analytics');
+  analytics = new Analytics(db.db);
+  console.log('[ANALYTICS] Analytics engine initialized');
+} catch (e) {
+  console.log('[ANALYTICS] Not available:', e.message);
+}
+
+// ─── REST API + DASHBOARD ───
+const dellAPI = new DellAPI({ db, config, messageQueue, costTracker: typeof costTracker !== 'undefined' ? costTracker : null, guardian, planner, analytics });
 dellAPI.start();
 
 // ─── VERSION-AWARE STARTUP MESSAGE ───

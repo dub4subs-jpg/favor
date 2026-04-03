@@ -1,0 +1,75 @@
+/* ============================================================
+   Favor Dashboard — Design Tokens
+   Dark teal-green command center palette
+   ============================================================ */
+
+:root {
+  /* ── Backgrounds ── dark with subtle green undertone */
+  --bg: #0a0f0a;
+  --surface: #0f1a14;
+  --surface-2: #152420;
+  --surface-3: #1a2e28;
+  --border: #1e3a2e;
+  --border-hover: #25D36650;
+  --border-glow: #25D36640;
+
+  /* ── Text ── */
+  --text: #e8ede8;
+  --text-dim: #7a8a7e;
+  --text-muted: #4a5a4e;
+
+  /* ── Accent (WhatsApp green) ── */
+  --accent: #25D366;
+  --accent-dim: #128C7E;
+  --accent-glow: rgba(37, 211, 102, 0.12);
+  --accent-bg: rgba(37, 211, 102, 0.06);
+
+  /* ── Semantic ── */
+  --success: #25D366;
+  --warning: #fb923c;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  /* ── Chart palette ── */
+  --purple: #a78bfa;
+  --blue: #60a5fa;
+  --orange: #fb923c;
+  --red: #f87171;
+  --teal: #2dd4bf;
+  --yellow: #fbbf24;
+  --pink: #f472b6;
+
+  /* ── Typography ── */
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* ── Spacing scale ── */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* ── Border radii ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ── */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 30px var(--accent-glow);
+  --shadow-glow-strong: 0 0 50px rgba(37, 211, 102, 0.18);
+
+  /* ── Layout constants ── */
+  --sidebar-width: 220px;
+  --sidebar-collapsed: 60px;
+  --bottombar-height: 60px;
+
+  /* ── Transitions ── */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.2s ease;
+  --transition-slow: 0.3s ease;
+}

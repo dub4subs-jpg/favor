@@ -4,6 +4,8 @@
 
 const http = require('http');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
 
 class DellAPI {
   constructor(opts) {
@@ -15,6 +17,7 @@ class DellAPI {
     this.costTracker = opts.costTracker;
     this.guardian = opts.guardian;
     this.planner = opts.planner;
+    this.analytics = opts.analytics;
     this.server = null;
   }
 
@@ -50,6 +53,38 @@ class DellAPI {
     });
   }
 
+  _serveDashboard(req, res) {
+    const MIME = {
+      '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+      '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json',
+      '.ico': 'image/x-icon',
+    };
+    const parsed = url.parse(req.url);
+    const rel = parsed.pathname.replace(/^\/dashboard\/?/, '') || 'index.html';
+    const dashDir = path.resolve(__dirname, 'dashboard');
+    let filePath = path.resolve(dashDir, rel);
+
+    // Security: prevent directory traversal
+    if (!filePath.startsWith(dashDir + path.sep) && filePath !== dashDir) {
+      this._json(res, 403, { error: 'forbidden' });
+      return;
+    }
+
+    try {
+      // SPA fallback: if file doesn't exist or is directory, serve index.html
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        filePath = path.join(dashDir, 'index.html');
+      }
+      const data = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = MIME[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' });
+      res.end(data);
+    } catch (e) {
+      this._json(res, 404, { error: 'file not found' });
+    }
+  }
+
   async _handle(req, res) {
     // CORS preflight
     if (req.method === 'OPTIONS') {
@@ -62,18 +97,31 @@ class DellAPI {
       return;
     }
 
-    // Auth required for all endpoints
+    const parsed = url.parse(req.url, true);
+    const reqPath = parsed.pathname;
+
+    // ─── Dashboard (static files, no auth) ───
+    if (this.config.dashboard?.enabled !== false && req.method === 'GET') {
+      if (reqPath === '/dashboard') {
+        res.writeHead(301, { 'Location': '/dashboard/' });
+        res.end();
+        return;
+      }
+      if (reqPath.startsWith('/dashboard/')) {
+        this._serveDashboard(req, res);
+        return;
+      }
+    }
+
+    // Auth required for all API endpoints
     if (!this._auth(req)) {
       this._json(res, 401, { error: 'unauthorized' });
       return;
     }
 
-    const parsed = url.parse(req.url, true);
-    const path = parsed.pathname;
-
     try {
       // ─── GET /api/health ───
-      if (req.method === 'GET' && path === '/api/health') {
+      if (req.method === 'GET' && reqPath === '/api/health') {
         const counts = this.db.getMemoryCount();
         const uptime = process.uptime();
         const queueStats = this.messageQueue?.stats || {};
@@ -93,7 +141,7 @@ class DellAPI {
       }
 
       // ─── GET /api/costs ───
-      if (req.method === 'GET' && path === '/api/costs') {
+      if (req.method === 'GET' && reqPath === '/api/costs') {
         if (!this.costTracker) {
           this._json(res, 200, { error: 'cost tracker not available' });
           return;
@@ -105,7 +153,7 @@ class DellAPI {
       }
 
       // ─── GET /api/memory/search?q=... ───
-      if (req.method === 'GET' && path === '/api/memory/search') {
+      if (req.method === 'GET' && reqPath === '/api/memory/search') {
         const query = parsed.query.q || '';
         if (!query) {
           this._json(res, 400, { error: 'missing ?q= parameter' });
@@ -117,7 +165,7 @@ class DellAPI {
       }
 
       // ─── GET /api/memories ───
-      if (req.method === 'GET' && path === '/api/memories') {
+      if (req.method === 'GET' && reqPath === '/api/memories') {
         const all = this.db.getAllMemories();
         const counts = this.db.getMemoryCount();
         this._json(res, 200, { counts, recent: { facts: all.facts.slice(-10), decisions: all.decisions.slice(-10), preferences: all.preferences.slice(-10), tasks: all.tasks.slice(-10) } });
@@ -125,7 +173,7 @@ class DellAPI {
       }
 
       // ─── GET /api/threads?contact=... ───
-      if (req.method === 'GET' && path === '/api/threads') {
+      if (req.method === 'GET' && reqPath === '/api/threads') {
         const contact = parsed.query.contact || '';
         const threads = contact ? this.db.getOpenThreads(contact, 20) : [];
         this._json(res, 200, { threads });
@@ -133,7 +181,7 @@ class DellAPI {
       }
 
       // ─── GET /api/plans?contact=... ───
-      if (req.method === 'GET' && path === '/api/plans') {
+      if (req.method === 'GET' && reqPath === '/api/plans') {
         if (!this.planner) { this._json(res, 200, { plans: [] }); return; }
         const contact = parsed.query.contact || '';
         const plans = contact ? this.planner.getRecent(contact, 10) : [];
@@ -142,20 +190,20 @@ class DellAPI {
       }
 
       // ─── GET /api/lessons ───
-      if (req.method === 'GET' && path === '/api/lessons') {
+      if (req.method === 'GET' && reqPath === '/api/lessons') {
         const lessons = this.db.getAllActiveLessons();
         this._json(res, 200, { lessons });
         return;
       }
 
       // ─── GET /api/queue ───
-      if (req.method === 'GET' && path === '/api/queue') {
+      if (req.method === 'GET' && reqPath === '/api/queue') {
         this._json(res, 200, { stats: this.messageQueue?.stats || {} });
         return;
       }
 
       // ─── GET /api/audit?contact=... ───
-      if (req.method === 'GET' && path === '/api/audit') {
+      if (req.method === 'GET' && reqPath === '/api/audit') {
         const contact = parsed.query.contact || '';
         try {
           const rawDb = this.db.db; // FavorMemory wraps better-sqlite3 as .db
@@ -169,11 +217,70 @@ class DellAPI {
         return;
       }
 
+      // ─── GET /api/contacts ───
+      if (req.method === 'GET' && reqPath === '/api/contacts') {
+        const contacts = this.db.getAllContacts();
+        this._json(res, 200, { contacts: contacts.map(c => ({
+          contact: c.contact, display_name: c.display_name,
+          communication_style: c.communication_style, topics: c.topics,
+          trust_trend: c.trust_trend, message_count: c.message_count,
+          last_interaction: c.last_interaction,
+        })) });
+        return;
+      }
+
+      // ─── GET /api/guardian ───
+      if (req.method === 'GET' && reqPath === '/api/guardian') {
+        if (!this.guardian) {
+          this._json(res, 200, { error: 'guardian not available' });
+          return;
+        }
+        const status = this.guardian.getGuardStatus();
+        this._json(res, 200, status);
+        return;
+      }
+
+      // ─── GET /api/settings ───
+      if (req.method === 'GET' && reqPath === '/api/settings') {
+        const cfg = this.config;
+        this._json(res, 200, {
+          identity: cfg.identity || {},
+          platform: cfg.platform,
+          model: { id: cfg.model?.id, provider: cfg.model?.provider },
+          fallbackModel: { id: cfg.fallbackModel?.id },
+          features: {
+            alive: !!cfg.alive?.enabled,
+            guardian: true,
+            vault: !!cfg.vault?.secret,
+            screenAwareness: !!cfg.screenAwareness?.enabled,
+            laptop: !!cfg.laptop?.enabled,
+            phone: !!cfg.phone?.enabled,
+            playwright: false,
+          },
+          guard: cfg.guard || {},
+        });
+        return;
+      }
+
+      // ─── GET /api/analytics ───
+      if (req.method === 'GET' && reqPath === '/api/analytics') {
+        if (!this.analytics) {
+          this._json(res, 200, { routes: [], costs: [] });
+          return;
+        }
+        const routes = this.analytics.routeStats('-1 day');
+        const costs = this.analytics.costStats('-1 day');
+        this._json(res, 200, { routes, costs });
+        return;
+      }
+
       // 404
       this._json(res, 404, { error: 'not found', endpoints: [
         'GET /api/health', 'GET /api/costs', 'GET /api/memory/search?q=',
         'GET /api/memories', 'GET /api/threads?contact=', 'GET /api/plans?contact=',
-        'GET /api/lessons', 'GET /api/queue', 'GET /api/audit'
+        'GET /api/lessons', 'GET /api/queue', 'GET /api/audit',
+        'GET /api/contacts', 'GET /api/guardian', 'GET /api/settings',
+        'GET /api/analytics', 'GET /dashboard/',
       ]});
     } catch (e) {
       console.error('[API] Error:', e.message);

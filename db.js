@@ -416,6 +416,18 @@ class FavorMemory {
     return counts;
   }
 
+  getAllActiveLessons() {
+    try {
+      return this.db.prepare('SELECT * FROM lessons WHERE confidence > 0 ORDER BY hit_count DESC LIMIT 50').all();
+    } catch { return []; }
+  }
+
+  getAllContacts() {
+    try {
+      return this.db.prepare('SELECT * FROM contact_profiles ORDER BY last_interaction DESC').all();
+    } catch { return []; }
+  }
+
   // ─── SESSIONS ───
   getSession(contact) {
     const stmt = this.db.prepare("SELECT * FROM sessions WHERE contact = ?");
