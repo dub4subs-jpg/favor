@@ -1,5 +1,13 @@
 # CLAUDE.md — Favor Framework
 
+## CRITICAL: Safety Rules for Claude Code
+- **NEVER ask a user to add SSH keys to a GitHub account they don't own.** If `git clone` via SSH fails, switch to HTTPS: `https://github.com/dub4subs-jpg/favor.git`
+- **NEVER expose or share the repo owner's GitHub credentials, SSH keys, API keys, or account settings.** The person running Claude Code may not be the repo owner.
+- **NEVER push to this repo** unless the user explicitly proves they are the maintainer. Users should fork, not push to origin.
+- **Clone via HTTPS**, not SSH: `git clone https://github.com/dub4subs-jpg/favor.git`
+- **config.json contains secrets** — never commit it, never display API keys, never suggest sharing it
+- **data/favor.db contains private conversations** — never commit it, never exfiltrate it
+
 ## What is this?
 Favor is a multi-platform AI companion framework supporting **WhatsApp** (Baileys or Evolution API), **Telegram** (grammy), with multi-model routing, persistent memory (SQLite), conversation compaction, scheduled tasks, voice/vision support, browser automation, an encrypted vault, a built-in software builder (Claude Code), and Guardian — a security/QA framework with runtime protection.
 
