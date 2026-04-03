@@ -17,6 +17,7 @@ const Checkins = require('./checkins');
 const Callbacks = require('./callbacks');
 const Insights = require('./insights');
 const Silence = require('./silence');
+const Personality = require('./personality');
 
 class AliveEngine {
   constructor(db, openai, opts = {}) {
@@ -40,6 +41,7 @@ class AliveEngine {
     this.callbacks = new Callbacks(this);
     this.insights = new Insights(this);
     this.silence = new Silence(this);
+    this.personality = new Personality(this);
 
     console.log('[ALIVE] Engine initialized');
   }
@@ -63,6 +65,7 @@ class AliveEngine {
       ...this.callbacks.ensureCrons(labels),
       ...this.insights.ensureCrons(labels),
       ...this.silence.ensureCrons(labels),
+      ...this.personality.ensureCrons(labels),
     ];
 
     if (created.length) {
@@ -102,6 +105,8 @@ class AliveEngine {
         return this.insights.handle(cron, taskData);
       case 'alive:silence_check':
         return this.silence.handle(cron, taskData);
+      case 'alive:personality_reflect':
+        return this.personality.handle(cron, taskData);
       default:
         console.warn(`[ALIVE] Unknown type: ${taskData.type}`);
     }
