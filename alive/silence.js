@@ -48,40 +48,23 @@ class Silence {
     const operatorJid = this.engine.toJid(cron.contact);
     let lastMsgTime = 0;
     try {
-      // Check audit trail for last inbound message
-      const lastInbound = this.engine.db.db.prepare(
-        "SELECT created_at FROM audit_log WHERE action LIKE '%inbound%' OR action LIKE '%message.in%' OR (action = 'message' AND details LIKE ?) ORDER BY created_at DESC LIMIT 1"
-      ).get(`%${cron.contact}%`);
-      if (lastInbound) {
-        lastMsgTime = new Date(lastInbound.created_at).getTime();
-      }
-
-      // Fallback: parse user messages from session
-      if (!lastMsgTime) {
-        const session = this.engine.db.db.prepare(
-          "SELECT messages FROM sessions WHERE contact = ? ORDER BY updated_at DESC LIMIT 1"
-        ).get(operatorJid);
-        if (session) {
-          try {
-            const msgs = JSON.parse(session.messages);
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              if (msgs[i].role === 'user') {
-                lastMsgTime = msgs[i].timestamp ? new Date(msgs[i].timestamp).getTime() : 0;
-                break;
-              }
+      // Parse actual user messages from session history
+      const session = this.engine.db.db.prepare(
+        "SELECT messages FROM sessions WHERE contact = ? ORDER BY updated_at DESC LIMIT 1"
+      ).get(operatorJid);
+      if (session) {
+        try {
+          const msgs = JSON.parse(session.messages);
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'user') {
+              lastMsgTime = msgs[i].timestamp ? new Date(msgs[i].timestamp).getTime() : 0;
+              break;
             }
-          } catch {}
-        }
-      }
-
-      // Last resort: skip if any alive module fired recently
-      if (!lastMsgTime) {
-        const lastAlive = this.engine.db.db.prepare(
-          "SELECT created_at FROM audit_log WHERE action LIKE 'alive.%' ORDER BY created_at DESC LIMIT 1"
-        ).get();
-        if (lastAlive) {
-          const aliveAge = Date.now() - new Date(lastAlive.created_at).getTime();
-          if (aliveAge < this.SILENCE_THRESHOLD_MS) return;
+          }
+        } catch {}
+        // Fallback: use session updated_at (conservative — includes bot activity)
+        if (!lastMsgTime) {
+          lastMsgTime = new Date(session.updated_at).getTime();
         }
       }
     } catch (err) {

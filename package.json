@@ -1,6 +1,6 @@
 {
   "name": "favor",
-  "version": "5.11.1",
+  "version": "5.11.2",
   "main": "favor.js",
   "description": "Multi-platform AI companion framework with intelligent multi-model routing, persistent memory, and extensible plugin system",
   "scripts": {
