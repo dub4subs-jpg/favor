@@ -4,6 +4,29 @@ All notable updates to Favor. When you run `./update.sh`, you'll see what's new.
 
 ---
 
+## [2026-04-03] v5.8.0 — Playwright Browser Automation
+
+### What's new
+- **Playwright tools** — 13 new `playwright_*` tools for advanced headless browser automation. Uses accessibility snapshots with ref-based targeting — more reliable than CSS selectors on modern SPAs and anti-bot sites.
+- **Clean page reading** — `browser_read_page` extracts clean article content (strips ads, nav, footers) using Readability.
+- **Multi-page crawling** — `browser_crawl` follows links on the same domain and extracts content from each page using Crawlee.
+- **Laptop browser support** — Connect to a real browser running on your laptop for tasks that need a residential IP or persistent login sessions.
+- **Security hardening** — All browser navigation now validates URLs (blocks SSRF to localhost, cloud metadata, private networks). Screenshot labels are sanitized to prevent path traversal.
+
+### What you can now do
+- Say "go to example.com and click the login button" — Playwright handles it with ref-based targeting
+- Say "read this article" — gets clean text, no clutter
+- Say "crawl this website" — follows links and summarizes each page
+- Connect your laptop browser for sites that block server IPs
+
+### Optional setup
+```bash
+# Install Playwright CLI (optional — Puppeteer tools still work without it)
+npm install -g @playwright/cli
+```
+
+---
+
 ## [2026-03-24] v4.0.0 — Production Refinement
 
 ### What you can now do
