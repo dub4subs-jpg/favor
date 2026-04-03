@@ -113,12 +113,13 @@ Rules:
     const e = this.engine;
     const parts = [];
 
-    // 1. Recent conversation activity — who messaged, how much, what about
+    // 1. Conversation activity — 7-day window with engagement trends
     try {
+      const cutoff7d = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
       const sessions = e.db.db.prepare(
-        "SELECT contact, messages, updated_at FROM sessions WHERE updated_at > ? ORDER BY updated_at DESC LIMIT 15"
-      ).all(cutoff24h);
+        "SELECT contact, messages, updated_at FROM sessions ORDER BY updated_at DESC LIMIT 20"
+      ).all();
 
       if (sessions.length) {
         const summary = sessions.map(s => {
@@ -129,9 +130,16 @@ Rules:
             const userMsgs = msgs.filter(m => m.role === 'user' && typeof m.content === 'string');
             lastUserMsg = userMsgs.length ? userMsgs[userMsgs.length - 1].content.substring(0, 100) : '';
           } catch {}
-          return `- ${s.contact}: ${msgCount} msgs, last: "${lastUserMsg}"`;
-        });
-        parts.push(`RECENT CONVERSATIONS (24h):\n${summary.join('\n')}`);
+          const updatedAt = new Date(s.updated_at).getTime();
+          const daysSilent = Math.round((Date.now() - updatedAt) / (1000 * 60 * 60 * 24));
+          const isRecent = updatedAt > cutoff24h;
+          const isStale = updatedAt < cutoff7d;
+          let trend = '';
+          if (isStale) trend = ' ⚠️ GONE QUIET (>7d)';
+          else if (!isRecent && daysSilent >= 3) trend = ` (quiet ${daysSilent}d)`;
+          return `- ${s.contact}: ${msgCount} msgs${trend}, last: "${lastUserMsg}"`;
+        }).filter(Boolean);
+        parts.push(`CONVERSATIONS (7-day view):\n${summary.join('\n')}`);
       }
     } catch {}
 
@@ -147,11 +155,11 @@ Rules:
       }
     } catch {}
 
-    // 3. Recent decisions (last 7 days)
+    // 3. Recent decisions (last 7 days, skip resolved)
     try {
       const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const decisions = e.db.db.prepare(
-        "SELECT content, created_at FROM memories WHERE category = 'decision' AND created_at >= ? ORDER BY created_at DESC LIMIT 5"
+        "SELECT content, created_at FROM memories WHERE category = 'decision' AND created_at >= ? AND (status IS NULL OR status NOT IN ('resolved','superseded')) ORDER BY created_at DESC LIMIT 5"
       ).all(cutoff7d);
       if (decisions.length) {
         parts.push(`RECENT DECISIONS:\n${decisions.map(d => `- ${d.content} (${d.created_at.split('T')[0]})`).join('\n')}`);
@@ -174,11 +182,26 @@ Rules:
       }
     } catch {}
 
-    // 6. Day/time context
+    // 6. Active lessons (learned behaviors)
+    try {
+      const lessons = e.db.getActiveLessons?.(5);
+      if (lessons?.length) {
+        parts.push(`LEARNED PATTERNS:\n${lessons.map(l => `- ${l.lesson} (confidence: ${l.confidence || '?'})`).join('\n')}`);
+      }
+    } catch {}
+
+    // 7. Day/time context
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const estTime = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
     parts.push(`NOW: ${dayNames[now.getDay()]} ${estTime} EST`);
+
+    // Business rhythm hints
+    const day = now.getDay();
+    const hints = [];
+    if (day === 5) hints.push('Friday — invoice day');
+    if (day === 1) hints.push('Monday — week start, review open items');
+    if (hints.length) parts.push(`RHYTHMS: ${hints.join(', ')}`);
 
     return parts.join('\n\n');
   }

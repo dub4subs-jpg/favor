@@ -3,6 +3,10 @@
 
 const { runCLI, isAvailable } = require('../utils/claude');
 
+// Optional Oura health integration
+let oura = null;
+try { oura = require('../oura'); } catch (_) {}
+
 function runClaudeHaiku(prompt, timeoutMs = 30000) {
   if (!isAvailable()) return Promise.reject(new Error('Claude Code CLI not installed'));
   return runCLI(prompt, { model: 'haiku', timeout: timeoutMs });
@@ -54,6 +58,18 @@ class Callbacks {
 
     const systemPrompt = this.engine.getSystemPrompt();
 
+    // Fetch Oura readiness to modulate callback urgency
+    let healthNote = '';
+    try {
+      if (oura?.getToken?.()) {
+        const health = await oura.getHealthSummary(1);
+        if (health.readiness?.score) {
+          if (health.readiness.score < 60) healthNote = '\n⚠️ Operator readiness is LOW today — only surface truly urgent items, skip anything that can wait.';
+          else if (health.readiness.score >= 85) healthNote = '\nOperator readiness is HIGH today — good time to surface items that need focused attention.';
+        }
+      }
+    } catch (err) { console.warn('[ALIVE] Oura fetch failed for callback:', err.message); }
+
     const prompt = `${systemPrompt}
 
 [SYSTEM: Memory callback]
@@ -63,7 +79,7 @@ You found an old memory. Decide if it's worth bringing up RIGHT NOW.
 Category: ${candidate.category}
 Saved: ${candidate.created_at}
 Content: ${candidate.content}
-${candidate.status ? `Status: ${candidate.status}` : ''}
+${candidate.status ? `Status: ${candidate.status}` : ''}${healthNote}
 
 RESPOND WITH EXACTLY "SKIP" IF ANY OF THESE ARE TRUE:
 - This is reference info (contacts, phone numbers, addresses, project descriptions, locations) — not actionable

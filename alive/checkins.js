@@ -3,6 +3,10 @@
 
 const { runCLI, isAvailable } = require('../utils/claude');
 
+// Optional Oura health integration
+let oura = null;
+try { oura = require('../oura'); } catch (_) {}
+
 function runClaudeHaiku(prompt, timeoutMs = 30000) {
   if (!isAvailable()) return Promise.reject(new Error('Claude Code CLI not installed'));
   return runCLI(prompt, { model: 'haiku', timeout: timeoutMs });
@@ -54,7 +58,7 @@ class Checkins {
     console.log(`[ALIVE] ${style} check-in firing`);
 
     const isBrief = style === 'morning' && this.engine.morningBriefEnabled;
-    const context = isBrief ? this._gatherBriefContext() : this._gatherContext(style);
+    const context = isBrief ? await this._gatherBriefContext() : await this._gatherContext(style);
     const systemPrompt = this.engine.getSystemPrompt();
 
     const prompt = isBrief
@@ -85,7 +89,7 @@ class Checkins {
   }
 
   // Gather context for personalized check-ins
-  _gatherContext(style) {
+  async _gatherContext(style) {
     const e = this.engine;
     const parts = [];
 
@@ -113,6 +117,36 @@ class Checkins {
       parts.push(`Pending tasks:\n${tasks.map(t => `- ${t.content} (${t.status || 'pending'})`).join('\n')}`);
     }
 
+    // Oura health data (optional)
+    try {
+      if (oura?.getToken?.()) {
+        const health = await oura.getHealthSummary(1);
+        const hParts = [];
+        if (health.readiness?.score) hParts.push(`Readiness: ${health.readiness.score}/100`);
+        if (health.sleep?.score) hParts.push(`Sleep: ${health.sleep.score}/100`);
+        if (health.activity?.score) hParts.push(`Activity: ${health.activity.score}/100${health.activity.steps ? ` (${health.activity.steps.toLocaleString()} steps)` : ''}`);
+        if (hParts.length) {
+          parts.push(`OURA HEALTH:\n${hParts.join('\n')}\n(Weave health naturally into your check-in if relevant — don't list scores robotically)`);
+        }
+      }
+    } catch (err) { console.warn('[ALIVE] Oura fetch failed for checkin:', err.message); }
+
+    // Location awareness (if location_history table exists)
+    try {
+      const loc = e.db.db.prepare(
+        "SELECT battery, address, created_at FROM location_history ORDER BY created_at DESC LIMIT 1"
+      ).get();
+      if (loc) {
+        const locAge = (Date.now() - new Date(loc.created_at).getTime()) / (1000 * 60 * 60);
+        if (locAge < 6) {
+          const locParts = [];
+          if (loc.battery != null) locParts.push(`Battery: ${Math.round(loc.battery * 100)}%`);
+          if (loc.address) locParts.push(`Location: ${loc.address}`);
+          if (locParts.length) parts.push(`CONTEXT: ${locParts.join(', ')}`);
+        }
+      }
+    } catch (_) {}
+
     // Day/time
     const now = new Date();
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -122,7 +156,7 @@ class Checkins {
   }
 
   // Gather structured context for morning intelligence brief
-  _gatherBriefContext() {
+  async _gatherBriefContext() {
     const e = this.engine;
     const parts = [];
 
@@ -172,6 +206,18 @@ class Checkins {
       const lessons = e.db.getActiveLessons?.(3);
       if (lessons?.length) {
         parts.push(`RECENT LESSONS:\n${lessons.map(l => `- ${l.lesson}`).join('\n')}`);
+      }
+    } catch (_) {}
+
+    // Oura health data (optional)
+    try {
+      if (oura?.getToken?.()) {
+        const health = await oura.getHealthSummary(1);
+        const hParts = [];
+        if (health.readiness?.score) hParts.push(`Readiness: ${health.readiness.score}/100`);
+        if (health.sleep?.score) hParts.push(`Sleep: ${health.sleep.score}/100`);
+        if (health.activity?.score) hParts.push(`Activity: ${health.activity.score}/100${health.activity.steps ? ` (${health.activity.steps.toLocaleString()} steps)` : ''}`);
+        if (hParts.length) parts.push(`HEALTH (Oura):\n${hParts.join('\n')}`);
       }
     } catch (_) {}
 
