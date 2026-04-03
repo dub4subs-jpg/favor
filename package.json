@@ -1,6 +1,6 @@
 {
   "name": "favor",
-  "version": "5.7.0",
+  "version": "5.8.0",
   "main": "favor.js",
   "description": "Multi-platform AI companion framework with intelligent multi-model routing, persistent memory, and extensible plugin system",
   "scripts": {
@@ -30,11 +30,14 @@
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
     "@google/generative-ai": "^0.24.1",
+    "@mozilla/readability": "^0.6.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "@xenova/transformers": "^2.17.2",
     "axios": "^1.13.6",
     "better-sqlite3": "^12.6.2",
+    "crawlee": "^3.16.0",
     "grammy": "^1.41.1",
+    "linkedom": "^0.18.12",
     "openai": "^6.27.0",
     "pino": "^10.3.1",
     "puppeteer": "^24.39.0",

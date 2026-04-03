@@ -46,7 +46,8 @@ db.js           — SQLite database layer (sessions, memory, topics, crons, audi
 compactor.js    — Summarizes old messages to save context window space (Claude CLI)
 cron.js         — Scheduled task engine (reminders, proactive outreach)
 vault.js        — AES-256-GCM encrypted storage for cards/addresses/IDs
-browser.js      — Puppeteer automation (navigate, click, fill forms, screenshot)
+browser.js      — Puppeteer automation (navigate, click, fill forms, screenshot, readPage, crawl)
+playwright.js   — Playwright CLI wrapper (ref-based targeting, accessibility snapshots, anti-bot capable)
 video.js        — Video download, transcription, analysis (yt-dlp, ffmpeg, Whisper + Claude CLI vision)
 build-mode.js   — Claude Code CLI integration for building software projects
 guardian.js     — Unified security framework: code scanning + runtime guard
@@ -134,6 +135,39 @@ Message the bot "start remote" and it spins up a Claude Code session in tmux, th
 | **Total** | **$30-65/mo** | **$2-5/mo + $20-100 subscription** |
 
 For users already paying for Claude Pro ($20/mo) or Max ($100/mo), the bot runs ~95% free.
+
+## Browser Automation
+Two browser engines available, each with different strengths:
+
+### Puppeteer (browser_* tools)
+Basic headless Chrome via `browser.js`. Uses CSS selectors for targeting.
+- `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_fill_form`
+- `browser_screenshot`, `browser_get_fields`, `browser_get_clickables`, `browser_get_text`, `browser_scroll`
+- `browser_evaluate`, `browser_close`, `browser_status`, `browser_fill_from_vault`
+- `browser_read_page` — Clean content extraction via Readability (strips nav, ads, footers)
+- `browser_crawl` — Multi-page crawling via Crawlee (follows same-domain links)
+
+### Playwright (playwright_* tools)
+Advanced browser automation via `@playwright/cli`. Uses accessibility snapshots with ref-based element targeting — more reliable for modern SPAs and anti-bot sites.
+- `playwright_navigate`, `playwright_snapshot`, `playwright_click`, `playwright_fill`
+- `playwright_type`, `playwright_press`, `playwright_select`, `playwright_hover`
+- `playwright_screenshot`, `playwright_evaluate`, `playwright_tabs`, `playwright_close`, `playwright_status`
+
+**Workflow:** `playwright_navigate` → `playwright_snapshot` (get element refs) → `playwright_click`/`playwright_fill` (use refs like "ref=42").
+
+**Install:** `npm install -g @playwright/cli` (optional — Puppeteer tools still work without it).
+
+### Laptop Browser Server (optional)
+Connect to a real browser on a remote machine (e.g. laptop) for tasks that need a residential IP or persistent login sessions. Set up a Playwright browser server on the laptop and configure `config.json`:
+```json
+"laptopBrowser": {
+  "enabled": true,
+  "host": "your-laptop-ip",
+  "port": 7700,
+  "token": "your-auth-token"
+}
+```
+The `browser_*` tools will automatically route through the laptop browser when configured.
 
 ## Build Mode
 Shells out to Claude Code CLI to build software projects via WhatsApp.

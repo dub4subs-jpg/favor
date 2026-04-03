@@ -324,6 +324,11 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
         env: claudeEnv(),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      // Register with process reaper for cleanup of stale processes
+      try {
+        const registry = require('./process-registry');
+        registry.register(proc, { source: 'router', purpose: 'cli-task', timeoutMs, model: model || 'default' });
+      } catch {}
       let stdout = '', stderr = '';
       proc.stdout.on('data', d => stdout += d);
       proc.stderr.on('data', d => stderr += d);

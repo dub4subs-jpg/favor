@@ -316,6 +316,7 @@ class EvolutionAdapter extends EventEmitter {
       // ignore
     }
   }
+
 }
 
 module.exports = EvolutionAdapter;

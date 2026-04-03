@@ -103,6 +103,12 @@ else
     echo "  [ ] Chromium — not installed"
     ISSUES+=("chromium_missing")
 fi
+if command -v playwright-cli &> /dev/null; then
+    echo "  [✓] playwright-cli (advanced browser automation)"
+else
+    echo "  [ ] playwright-cli — not installed (optional)"
+    ISSUES+=("playwright_cli_missing")
+fi
 
 # ─── Python packages ───
 if python3 -c "import faster_whisper" 2>/dev/null; then
@@ -277,6 +283,12 @@ if [[ " ${ISSUES[*]} " =~ "chromium_missing" ]]; then
     echo "  [*] Installing Chromium (for browser automation)..."
     apt install -y chromium-browser 2>/dev/null || apt install -y chromium 2>/dev/null
     echo "  [✓] Chromium installed"
+fi
+
+# Playwright CLI (optional — advanced browser automation with ref-based targeting)
+if [[ " ${ISSUES[*]} " =~ "playwright_cli_missing" ]]; then
+    echo "  [*] Installing @playwright/cli (optional — advanced browser automation)..."
+    npm install -g @playwright/cli > /dev/null 2>&1 && echo "  [✓] playwright-cli installed" || echo "  [!] playwright-cli install failed (optional — Puppeteer tools still work)"
 fi
 
 # ─── Python packages ───

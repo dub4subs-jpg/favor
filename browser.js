@@ -1,13 +1,34 @@
 /**
  * Browser Automation — Puppeteer-based headless Chrome for web tasks
  * Handles navigation, form filling, screenshots, and purchases
+ * Enhanced with Readability (clean content extraction) and Crawlee (production scraping)
  */
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs');
+const { Readability } = require('@mozilla/readability');
+const { parseHTML } = require('linkedom');
 
 const SCREENSHOTS_DIR = path.join(__dirname, 'data', 'browser_screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+
+function sanitizeLabel(label) {
+  return String(label || 'page').replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 50);
+}
+
+function validateUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '0.0.0.0') return false;
+    if (host === '169.254.169.254' || host.endsWith('.internal')) return false;
+    if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host)) return false;
+    return true;
+  } catch { return false; }
+}
+
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 class Browser {
   constructor() {
@@ -30,8 +51,7 @@ class Browser {
       defaultViewport: { width: 1440, height: 900 }
     });
     this.page = await this.browser.newPage();
-    // Set a realistic user agent
-    await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await this.page.setUserAgent(BROWSER_UA);
     // Block unnecessary resources for speed
     await this.page.setRequestInterception(true);
     this.page.on('request', req => {
@@ -45,7 +65,7 @@ class Browser {
     await this._ensureBrowser();
     if (!this.page || this.page.isClosed()) {
       this.page = await this.browser.newPage();
-      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+      await this.page.setUserAgent(BROWSER_UA);
     }
     return this.page;
   }
@@ -54,6 +74,7 @@ class Browser {
    * Navigate to a URL
    */
   async navigate(url, waitFor = 'networkidle2') {
+    if (!validateUrl(url)) return { ok: false, error: 'Invalid or blocked URL. Only http/https to public hosts allowed.' };
     const page = await this._ensurePage();
     try {
       await page.goto(url, { waitUntil: waitFor, timeout: 30000 });
@@ -68,6 +89,7 @@ class Browser {
    * Take a screenshot and return the file path + base64 buffer
    */
   async screenshot(label = 'page') {
+    label = sanitizeLabel(label);
     const page = await this._ensurePage();
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${label}_${ts}.png`;
@@ -246,6 +268,111 @@ class Browser {
       window.scrollBy(0, dir === 'down' ? amt : -amt);
     }, direction, amount);
     return { ok: true };
+  }
+
+  /**
+   * Read a page and return clean content using Readability.
+   * Much better than getText() for feeding to AI — strips nav, ads, footers.
+   */
+  async readPage(url) {
+    try {
+      if (url) {
+        if (!validateUrl(url)) return { ok: false, error: 'Invalid or blocked URL.' };
+        const nav = await this.navigate(url);
+        if (!nav.ok) return { ok: false, error: nav.error };
+      }
+      const page = await this._ensurePage();
+      const html = await page.content();
+      const currentUrl = page.url();
+
+      const { document } = parseHTML(html);
+      const reader = new Readability(document, { charThreshold: 100 });
+      const article = reader.parse();
+
+      if (!article) {
+        const fallback = await this.getText('body');
+        return { ok: true, title: await page.title(), content: fallback, url: currentUrl, fallback: true };
+      }
+
+      const cleanText = article.textContent
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .substring(0, 8000);
+
+      return {
+        ok: true,
+        title: article.title || '',
+        content: cleanText,
+        byline: article.byline || '',
+        excerpt: article.excerpt || '',
+        length: article.length || 0,
+        url: currentUrl
+      };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  /**
+   * Crawl multiple pages from a starting URL using Crawlee.
+   * Returns an array of { url, title, content } for each page crawled.
+   * Options: { maxPages, match (glob pattern), maxDepth }
+   */
+  async crawl(startUrl, options = {}) {
+    if (!validateUrl(startUrl)) return { ok: false, error: 'Invalid or blocked URL.' };
+    const maxPages = options.maxPages || 5;
+    const maxDepth = options.maxDepth || 2;
+    const match = options.match || null;
+    const results = [];
+
+    try {
+      const { PuppeteerCrawler } = await import('crawlee');
+
+      const crawler = new PuppeteerCrawler({
+        maxRequestsPerCrawl: maxPages,
+        maxCrawlDepth: maxDepth,
+        headless: true,
+        launchContext: {
+          launchOptions: {
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+          }
+        },
+        async requestHandler({ request, page, enqueueLinks }) {
+          const title = await page.title();
+          const html = await page.content();
+
+          const { document } = parseHTML(html);
+          const reader = new Readability(document, { charThreshold: 100 });
+          const article = reader.parse();
+
+          const content = article
+            ? article.textContent.replace(/\n{3,}/g, '\n\n').trim().substring(0, 4000)
+            : await page.$eval('body', el => el.innerText).catch(() => '').then(t => t.substring(0, 4000));
+
+          results.push({
+            url: request.loadedUrl || request.url,
+            title,
+            content,
+            depth: request.userData?.depth || 0
+          });
+
+          if (results.length < maxPages) {
+            await enqueueLinks({
+              strategy: 'same-domain',
+              globs: match ? [match] : undefined
+            });
+          }
+        },
+        failedRequestHandler({ request }) {
+          console.warn(`[CRAWL] Failed: ${request.url}`);
+        }
+      });
+
+      await crawler.run([startUrl]);
+      return { ok: true, pages: results, count: results.length };
+    } catch (e) {
+      return { ok: false, error: e.message, pages: results };
+    }
   }
 
   /**

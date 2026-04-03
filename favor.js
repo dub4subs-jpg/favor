@@ -28,24 +28,18 @@ const ToolAudit = require('./tool-audit');
 const AdaptiveTimeouts = require('./adaptive-timeouts');
 const Planner = require('./planner');
 const DellAPI = require('./api');
+const AccessControl = require('./core/access-control');
+const CommandHandler = require('./core/command-handler');
+const MediaHandler = require('./core/media-handler');
+const { createToolExecutor } = require('./core/tool-executor');
+const ScreenAwareness = require('./core/screen-awareness');
+const reaper = require('./reaper');
 const pino = require('pino');
 
 const logger = pino({ level: 'silent' }); // suppress baileys noise
 
-// ─── LOCAL TRANSCRIPTION (faster-whisper via Python, free) ───
-function localTranscribe(audioPath, language = 'en') {
-  try {
-    const { execSync } = require('child_process');
-    const result = execSync(
-      `python3 ${path.join(__dirname, 'transcribe.py')} "${audioPath}" ${language}`,
-      { timeout: 120000, encoding: 'utf8', maxBuffer: 1024 * 1024 }
-    ).trim();
-    return result || '';
-  } catch (e) {
-    console.warn('[TRANSCRIBE] Local whisper failed:', e.message);
-    return '';
-  }
-}
+// localTranscribe delegated to mediaHandler (core/media-handler.js)
+function localTranscribe(audioPath, language = 'en') { return mediaHandler.localTranscribe(audioPath, language); }
 
 // Suppress libsignal session noise (Closing session / Session already closed / Session already open)
 const _origInfo = console.info;
@@ -87,6 +81,12 @@ function reloadConfig() {
       return { changed: false, error: 'validation failed' };
     }
     config = newCfg;
+    // Propagate config to all extracted modules
+    if (typeof accessControl !== 'undefined') accessControl.updateConfig(config);
+    if (typeof commandHandler !== 'undefined') commandHandler.updateConfig(config);
+    if (typeof mediaHandler !== 'undefined') mediaHandler.updateConfig(config);
+    if (typeof screenAwareness !== 'undefined') screenAwareness.updateConfig(config);
+    if (typeof toolExecutor !== 'undefined') toolExecutor.updateConfig(config);
     db.audit('config.reload', `model: ${config.model.id}`);
     console.log(`[CONFIG] Reloaded. Model: ${config.model.id}`);
     return { changed: prev.model.id !== config.model.id, prev: prev.model.id, current: config.model.id };
@@ -196,9 +196,25 @@ try {
 const browser = new Browser();
 console.log('[BROWSER] Puppeteer browser module loaded');
 
+// ─── PLAYWRIGHT (advanced browser automation via @playwright/cli) ───
+let pw = null;
+try {
+  const { execFileSync } = require('child_process');
+  execFileSync('playwright-cli', ['--version'], { timeout: 5000, encoding: 'utf8' });
+  const PlaywrightCLI = require('./playwright');
+  pw = new PlaywrightCLI();
+  console.log('[PLAYWRIGHT] playwright-cli wrapper loaded');
+} catch {
+  console.log('[PLAYWRIGHT] playwright-cli not installed — Playwright tools disabled (install: npm install -g @playwright/cli)');
+}
+
 // ─── VIDEO PROCESSOR ───
 let videoProcessor = new VideoProcessor(openai);
 console.log('[VIDEO] Video processor initialized');
+
+// ─── MEDIA HANDLER ───
+const mediaHandler = new MediaHandler({ config, videoProcessor, PLATFORM, botDir: __dirname });
+mediaHandler.setLogger(logger);
 
 // ─── BUILD MODE (Claude Code for software building) ───
 const buildMode = new BuildMode(db);
@@ -216,6 +232,9 @@ if (pluginResult.loaded > 0) {
   // Append plugin tool definitions to the TOOLS array
   TOOLS.push(...pluginLoader.getToolDefinitions());
 }
+
+// ─── ACCESS CONTROL ───
+const accessControl = new AccessControl({ config, PLATFORM, TOOLS });
 
 // ─── GUARDIAN (QA / Watchdog + Runtime Guard) ───
 let guardian;
@@ -665,51 +684,16 @@ function laptopExec(command, opts = {}) {
 }
 async function isLaptopOnline() { const r = await laptopExec('echo online'); return r.ok && r.output === 'online'; }
 
-// ─── VOICE TRANSCRIPTION ───
-async function transcribeVoice(audioBuffer, mimetype) {
-  const openaiKey = config.api?.openaiApiKey || process.env.OPENAI_API_KEY;
-  if (!openaiKey) return null;
-
-  try {
-    const ext = mimetype?.includes('ogg') ? 'ogg' : mimetype?.includes('mp4') ? 'mp4' : 'webm';
-    const tmpPath = path.join(__dirname, 'data', `voice_${Date.now()}.${ext}`);
-    fs.writeFileSync(tmpPath, audioBuffer);
-
-    const result = await new Promise((resolve) => {
-      exec(
-        `curl -s -X POST https://api.openai.com/v1/audio/transcriptions -H "Authorization: Bearer ${openaiKey}" -F "file=@${tmpPath}" -F "model=whisper-1" -F "response_format=text"`,
-        { timeout: 30000 },
-        (err, stdout) => {
-          try { fs.unlinkSync(tmpPath); } catch (_) {}
-          if (err) resolve(null);
-          else resolve(stdout?.trim() || null);
-        }
-      );
-    });
-    return result;
-  } catch (e) {
-    console.error('[VOICE] Transcription error:', e.message);
-    return null;
-  }
-}
+// transcribeVoice delegated to mediaHandler (core/media-handler.js)
+async function transcribeVoice(buf, mime) { return mediaHandler.transcribeVoice(buf, mime); }
 
 // TOOLS and oaiTool already loaded above (before plugin loader)
 // Instance-specific tools can be appended: TOOLS.push(oaiTool(...))
 // All core definitions are in core/tool-definitions.js
 
 // ─── PROMPT INJECTION DEFENSE ───
-// Centralized sanitizer for ALL untrusted external content
 const { sanitizeExternalInput, stripInjectionPatterns } = require('./utils/sanitize');
-
-// Backward-compatible wrapper — existing code calls sanitizeBrowserOutput()
-function sanitizeBrowserOutput(text) {
-  return stripInjectionPatterns(text);
-}
-
-// Track last tool source to detect chained injection attacks
-let lastToolWasBrowser = false;
-let lastReceivedImage = null; // { buffer: Buffer, mimetype: string } — for forwarding via send_image
-const SENSITIVE_TOOLS = new Set(['vault_get', 'vault_save', 'vault_delete', 'send_message', 'send_image', 'send_email', 'browser_fill_from_vault', 'server_exec', 'write_file', 'laptop_run_command', 'laptop_write_file']);
+function sanitizeBrowserOutput(text) { return stripInjectionPatterns(text); }
 
 // ─── SCREENSHOT CAPTURE HELPER (reused by laptop_screenshot tool + screen awareness) ───
 let screenshotInProgress = false;
@@ -787,796 +771,24 @@ async function captureScreenshotBuffer() {
   }
 }
 
-const MAX_TOOL_RESULT_LENGTH = 8000; // ~2k tokens — prevents context window blowout
+const MAX_TOOL_RESULT_LENGTH = 8000;
 
-async function executeTool(name, input, context = {}) {
-  // GUARD: Role-based tool access control
-  const role = context.role || 'customer';
-  if (!canUseTool(role, name)) {
-    console.log(`[SECURITY] Blocked tool "${name}" — ${role} does not have access`);
-    db.audit('security.tool_blocked', `${role} tried to use ${name}`);
-    return `This tool is not available. Please contact the operator for help with this request.`;
-  }
+// ─── TOOL EXECUTOR (delegated to core/tool-executor.js) ───
+const toolExecutor = createToolExecutor({
+  db, config, vault, browser, pw, videoProcessor, buildMode, guardian, selfCheck,
+  pluginLoader, accessControl, mediaHandler, syncBot,
+  getEmbedding, runClaudeCLI, semanticSearch, updateOperatorProfile,
+  laptopExec, isLaptopOnline, captureScreenshotBuffer,
+  sanitizeExternalInput, sanitizeBrowserOutput,
+  PLATFORM, botDir: __dirname,
+});
 
-  // PLUGIN: Check if this is a plugin tool before the built-in switch
-  if (pluginLoader.has(name)) {
-    return await pluginLoader.execute(name, input, { config, db, vault, contact: context.contact, role });
-  }
-
-  // GUARD: If the last tool was a browser read and now a sensitive tool is being called,
-  // this could be a chained prompt injection (page content tricked the AI)
-  if (lastToolWasBrowser && SENSITIVE_TOOLS.has(name)) {
-    console.warn(`[SECURITY] Blocked ${name} — called immediately after browser content read. Possible injection.`);
-    db.audit('security.blocked', `Blocked ${name} after browser read — possible injection`);
-    lastToolWasBrowser = false;
-    return `SECURITY BLOCK: "${name}" cannot be called immediately after reading browser content. This is a safety measure against prompt injection. If the operator actually wants this action, they should send a new message requesting it directly.`;
-  }
-  lastToolWasBrowser = false;
-  switch (name) {
-    case 'laptop_screenshot': {
-      const result = await captureScreenshotBuffer();
-      if (!result) return 'Screenshot failed — laptop may be offline or capture timed out.';
-      try {
-        await sock.sendMessage(context.contact, { image: result.buffer, caption: `Screenshot — ${result.dateStr} ${result.timeStr.replace(/-/g, ':')} — saved to Favor/Screenshots/${result.dateStr}/` });
-        return '__IMAGE_SENT__';
-      } catch (e) {
-        return 'Screenshot captured but could not send: ' + e.message;
-      }
-    }
-    case 'laptop_open_app': {
-      // Use PowerShell Register-ScheduledTask via -EncodedCommand to avoid shell injection.
-      // schtasks instead of PsExec — PsExec -i 1 doesn't give full GPU/display access,
-      // causing heavy apps (Adobe, etc.) to freeze on splash screens
-      const { safePowerShell, psSafeString } = require('./utils/shell');
-      const psCode = `Register-ScheduledTask -TaskName TmpOpen -Action (New-ScheduledTaskAction -Execute ${psSafeString(input.app)}) -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2)) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries) -Force; Start-ScheduledTask -TaskName TmpOpen`;
-      const create = await laptopExec(safePowerShell(psCode));
-      if (!create.ok) return 'Error creating launch task: ' + create.output;
-      return `Launched "${input.app}" on the laptop desktop.`;
-    }
-    case 'laptop_open_url': {
-      // Use PowerShell Start-Process via -EncodedCommand to avoid shell injection.
-      const { safePowerShell, psSafeString } = require('./utils/shell');
-      const psCode = `Start-Process ${psSafeString(input.url)}`;
-      const create = await laptopExec(safePowerShell(psCode));
-      if (!create.ok) return 'Error opening URL: ' + create.output;
-      return `Opened ${input.url} on the laptop browser.`;
-    }
-    case 'laptop_status': {
-      const on = await isLaptopOnline();
-      return on ? 'Laptop is online and connected.' : 'Laptop is offline.';
-    }
-    case 'laptop_read_file': {
-      const { safePowerShell, psSafeString } = require('./utils/shell');
-      const r = await laptopExec(safePowerShell(`Get-Content ${psSafeString(input.file_path)} -Raw`));
-      if (!r.ok) return 'Error: ' + r.output;
-      return r.output.length > 3000 ? r.output.substring(0, 3000) + '\n...(truncated)' : (r.output || '(empty)');
-    }
-    case 'laptop_list_files': {
-      const { safePowerShell, psSafeString } = require('./utils/shell');
-      const r = await laptopExec(safePowerShell(`Get-ChildItem ${psSafeString(input.directory)} | Format-Table Name, Length, LastWriteTime`));
-      return r.ok ? r.output : 'Error: ' + r.output;
-    }
-    case 'laptop_run_command': {
-      const r = await laptopExec(input.command);
-      return r.ok ? (r.output || '(no output)') : 'Error: ' + r.output;
-    }
-    case 'laptop_write_file': {
-      // Pipe content via stdin — no shell escaping needed, handles all characters safely
-      const { psSafeString: psStr } = require('./utils/shell');
-      const r = await laptopExec(`cat > ${psStr(input.file_path)}`, { stdin: input.content });
-      return r.ok ? 'Written: ' + input.file_path : 'Error: ' + r.output;
-    }
-    case 'memory_save': {
-      // Dedup: check for near-duplicate memories before saving
-      const similar = db.findSimilar(input.category, input.content);
-      if (similar.length > 0) {
-        console.log(`[MEMORY] Dedup: found ${similar.length} similar memories, updating instead`);
-        // Update the most recent similar memory instead of creating a new one
-        const target = similar[0];
-        db.db.prepare('UPDATE memories SET content = ?, status = ?, updated_at = datetime(\'now\') WHERE id = ?')
-          .run(input.content, input.status || null, target.id);
-        getEmbedding(input.content).then(emb => db.updateEmbedding(target.id, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${target.id}:`, e.message));
-        return `Updated existing memory (was similar): ${input.content}`;
-      }
-      const memId = db.save(input.category, input.content, input.status);
-      console.log(`[MEMORY] ${input.category}: ${input.content}`);
-      // Embed in background — don't block the response
-      getEmbedding(input.content).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
-      return 'Remembered: ' + input.content;
-    }
-    case 'memory_search': {
-      const results = await semanticSearch(input.query);
-      if (!results.length) return 'Nothing found for: ' + input.query;
-      return results.map(r => `[${r.category}] ${r.content}${r.score ? ` (relevance: ${(r.score * 100).toFixed(0)}%)` : ''}`).join('\n');
-    }
-    case 'memory_forget': {
-      const removed = db.forget(input.category, input.query);
-      return removed > 0 ? `Forgot ${removed} item(s)` : 'Nothing found to forget.';
-    }
-    case 'server_exec': {
-      const { safExec } = require('./core/sandbox');
-      const result = safExec(input.command, { timeout: 15000, cwd: '/root' });
-      return result.ok ? (result.output || '(no output)').trim().substring(0, 3000) : 'Blocked: ' + result.error;
-    }
-    case 'read_file': {
-      try {
-        const content = fs.readFileSync(input.file_path, 'utf8');
-        return content.length > 3000 ? content.substring(0, 3000) + '\n...(truncated)' : (content || '(empty)');
-      } catch (e) { return 'Error: ' + e.message; }
-    }
-    case 'write_file': {
-      try {
-        const dir = path.dirname(input.file_path);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(input.file_path, input.content);
-        return 'Written: ' + input.file_path;
-      } catch (e) { return 'Error: ' + e.message; }
-    }
-    case 'web_search': {
-      const braveKey = process.env.BRAVE_API_KEY || config.api?.braveApiKey;
-      if (!braveKey) return 'Web search not configured (no BRAVE_API_KEY).';
-      try {
-        const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(input.query)}&count=5`;
-        const resp = await fetch(url, { headers: { 'X-Subscription-Token': braveKey, 'Accept': 'application/json' } });
-        const data = await resp.json();
-        if (!data.web?.results?.length) return 'No results found.';
-        const raw = data.web.results.map(r => `${r.title}\n${r.url}\n${r.description || ''}`).join('\n\n');
-        return sanitizeExternalInput(raw, 'web_search');
-      } catch (e) { return 'Search error: ' + e.message; }
-    }
-    case 'cron_create': {
-      const contact = context.contact || null;
-      const id = db.createCron(contact, input.label, input.schedule, JSON.stringify({ type: 'proactive', prompt: input.task }));
-      console.log(`[CRON] Created #${id}: "${input.label}" (${input.schedule})`);
-      return `Scheduled: "${input.label}" (${input.schedule}) — ID #${id}`;
-    }
-    case 'cron_list': {
-      const crons = db.getCrons(context.contact);
-      if (!crons.length) return 'No scheduled tasks.';
-      return crons.map(c => `#${c.id} [${c.enabled ? 'ON' : 'OFF'}] "${c.label}" — ${c.schedule}\n  Task: ${c.task.substring(0, 80)}\n  Next: ${c.next_run || 'N/A'}`).join('\n\n');
-    }
-    case 'cron_delete': {
-      const removed = db.deleteCron(input.id);
-      return removed ? `Deleted cron #${input.id}` : `Cron #${input.id} not found.`;
-    }
-    case 'cron_toggle': {
-      db.toggleCron(input.id, input.enabled);
-      return `Cron #${input.id} ${input.enabled ? 'enabled' : 'disabled'}.`;
-    }
-    case 'topic_create': {
-      const id = db.createTopic(context.contact, input.name);
-      console.log(`[TOPIC] Created: "${input.name}" for ${context.contact?.substring(0, 15)}`);
-      return `Topic created: "${input.name}" (ID #${id}) — now active.`;
-    }
-    case 'topic_switch': {
-      db.switchTopic(context.contact, input.id);
-      return `Switched to topic #${input.id}.`;
-    }
-    case 'topic_list': {
-      const topics = db.getTopics(context.contact);
-      if (!topics.length) return 'No topics. All conversation is in the main thread.';
-      return topics.map(t => `#${t.id} ${t.active ? '→' : ' '} "${t.name}" (${t.updated_at})`).join('\n');
-    }
-    case 'send_message': {
-      try {
-        let jid;
-        const contact = input.contact || '';
-        if (PLATFORM === 'telegram') {
-          // Accept tg_CHATID or raw chat ID
-          jid = contact.startsWith('tg_') ? contact : `tg_${contact}`;
-        } else {
-          const cleaned = contact.replace(/[^0-9+]/g, '');
-          if (!cleaned || cleaned.replace('+', '').length < 10) {
-            return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
-          }
-          jid = cleaned.replace('+', '') + '@s.whatsapp.net';
-        }
-        await sock.sendMessage(jid, { text: input.message });
-        console.log(`[PROACTIVE] Sent to ${contact}: ${input.message.substring(0, 60)}`);
-        return `Message sent to ${contact}`;
-      } catch (e) { return 'Send failed: ' + e.message; }
-    }
-    case 'email_search': {
-      try {
-        const { query, max_results } = input;
-        const max = Math.min(max_results || 5, 10);
-        const result = await new Promise((resolve, reject) => {
-          const { execFile } = require('child_process');
-          execFile('python3', [path.join(__dirname, 'read-gmail.py'), 'search', query, String(max)], { timeout: 30000 }, (err, stdout, stderr) => {
-            if (err) reject(new Error(stderr || err.message));
-            else resolve(stdout.trim());
-          });
-        });
-        console.log(`[EMAIL] Searched: "${query}"`);
-        return sanitizeExternalInput(result, 'email');
-      } catch (e) { return 'Email search failed: ' + e.message; }
-    }
-    case 'email_read': {
-      try {
-        const { message_id } = input;
-        const result = await new Promise((resolve, reject) => {
-          const { execFile } = require('child_process');
-          execFile('python3', [path.join(__dirname, 'read-gmail.py'), 'read', message_id], { timeout: 30000 }, (err, stdout, stderr) => {
-            if (err) reject(new Error(stderr || err.message));
-            else resolve(stdout.trim());
-          });
-        });
-        console.log(`[EMAIL] Read message: ${message_id}`);
-        return sanitizeExternalInput(result, 'email');
-      } catch (e) { return 'Email read failed: ' + e.message; }
-    }
-    case 'send_email': {
-      try {
-        const { to, subject, body: emailBody, attachment } = input;
-        if (!to || !subject || !emailBody) return 'Missing required fields: to, subject, body';
-        const args = ['python3', path.join(__dirname, 'send-gmail.py'), to, subject, emailBody];
-        if (attachment) args.push(attachment);
-        const result = await new Promise((resolve, reject) => {
-          const { execFile } = require('child_process');
-          execFile(args[0], args.slice(1), { timeout: 30000 }, (err, stdout, stderr) => {
-            if (err) reject(new Error(stderr || err.message));
-            else resolve(stdout.trim());
-          });
-        });
-        console.log(`[EMAIL] Sent to ${to}: "${subject}" ${attachment ? '(+attachment)' : ''}`);
-        return `Email sent to ${to} — ${result}`;
-      } catch (e) { return 'Email send failed: ' + e.message; }
-    }
-    case 'send_image': {
-      try {
-        if (!lastReceivedImage) return 'No image available to forward. The operator needs to send an image first.';
-        let jid;
-        const contact = input.contact || '';
-        if (PLATFORM === 'telegram') {
-          jid = contact.startsWith('tg_') ? contact : `tg_${contact}`;
-        } else {
-          const cleaned = contact.replace(/[^0-9+]/g, '');
-          if (!cleaned || cleaned.replace('+', '').length < 10) {
-            return 'Invalid phone number. Use full number with country code (e.g. +13055551234).';
-          }
-          jid = cleaned.replace('+', '') + '@s.whatsapp.net';
-        }
-        const msgPayload = { image: lastReceivedImage.buffer };
-        if (input.caption) msgPayload.caption = input.caption;
-        await sock.sendMessage(jid, msgPayload);
-        console.log(`[PROACTIVE] Sent image to ${cleaned}${input.caption ? ': ' + input.caption.substring(0, 60) : ''}`);
-        return `Image sent to ${cleaned}${input.caption ? ' with caption' : ''}`;
-      } catch (e) { return 'Send image failed: ' + e.message; }
-    }
-    // ─── VAULT TOOLS ───
-    case 'vault_save': {
-      if (!vault) return 'Vault not configured. Add vault.secret to config.json.';
-      try {
-        const result = vault.save(input.label, input.category, input.data);
-        console.log(`[VAULT] ${result.action}: ${input.label} (${input.category})`);
-        db.audit('vault.save', `${result.action} ${input.label}`);
-        return `Vault ${result.action}: "${input.label}" (${input.category}) — encrypted and stored securely.`;
-      } catch (e) { return 'Vault save error: ' + e.message; }
-    }
-    case 'vault_get': {
-      if (!vault) return 'Vault not configured.';
-      const entry = vault.get(input.label);
-      if (!entry) return `No vault entry found for "${input.label}".`;
-      if (entry.error) return entry.error;
-      console.log(`[VAULT] Retrieved: ${input.label} (redacted for AI)`);
-      // SECURITY: Redact sensitive fields — never send raw card data through the AI
-      const data = typeof entry.data === 'object' ? { ...entry.data } : entry.data;
-      if (typeof data === 'object') {
-        if (data.number || data.card_number) {
-          const num = data.number || data.card_number;
-          data.number = '****' + num.slice(-4);
-          delete data.card_number;
-        }
-        if (data.cvv || data.cvc || data.security_code) {
-          data.cvv = '***';
-          delete data.cvc;
-          delete data.security_code;
-        }
-        if (data.ssn) data.ssn = '***-**-' + data.ssn.slice(-4);
-        if (data.passport) data.passport = '***' + data.passport.slice(-3);
-      }
-      return JSON.stringify(data, null, 2);
-    }
-    case 'vault_list': {
-      if (!vault) return 'Vault not configured.';
-      const entries = vault.list(input.category);
-      if (!entries.length) return 'Vault is empty.';
-      return entries.map(e => `• ${e.label} (${e.category}) — saved ${e.created_at}`).join('\n');
-    }
-    case 'vault_delete': {
-      if (!vault) return 'Vault not configured.';
-      const deleted = vault.delete(input.label);
-      if (deleted) {
-        db.audit('vault.delete', input.label);
-        return `Deleted vault entry: "${input.label}"`;
-      }
-      return `No vault entry found for "${input.label}".`;
-    }
-    // ─── BROWSER TOOLS ───
-    case 'browser_navigate': {
-      const result = await browser.navigate(input.url);
-      if (result.ok) {
-        console.log(`[BROWSER] Navigated to: ${result.url}`);
-        return `Page loaded: "${result.title}"\nURL: ${result.url}`;
-      }
-      return 'Navigation failed: ' + result.error;
-    }
-    case 'browser_screenshot': {
-      try {
-        const shot = await browser.screenshot(input.label || 'page');
-        // Send screenshot to operator via WhatsApp
-        await sock.sendMessage(context.contact, { image: shot.buffer, caption: `Browser: ${input.label || 'page'} — ${new Date().toLocaleTimeString()}` });
-        console.log(`[BROWSER] Screenshot sent: ${shot.filename}`);
-        return '__IMAGE_SENT__';
-      } catch (e) { return 'Screenshot failed: ' + e.message; }
-    }
-    case 'browser_click': {
-      const result = await browser.click(input.selector);
-      return result.ok ? `Clicked: ${input.selector}` : 'Click failed: ' + result.error;
-    }
-    case 'browser_type': {
-      const result = await browser.type(input.selector, input.text, { clear: input.clear !== false });
-      return result.ok ? `Typed into ${input.selector}` : 'Type failed: ' + result.error;
-    }
-    case 'browser_select': {
-      const result = await browser.select(input.selector, input.value);
-      return result.ok ? `Selected "${input.value}" in ${input.selector}` : 'Select failed: ' + result.error;
-    }
-    case 'browser_fill_form': {
-      const results = await browser.fillForm(input.fields);
-      const ok = results.filter(r => r.ok).length;
-      const fail = results.filter(r => !r.ok);
-      let msg = `Filled ${ok}/${results.length} fields.`;
-      if (fail.length) msg += '\nFailed: ' + fail.map(f => `${f.selector}: ${f.error}`).join(', ');
-      return msg;
-    }
-    case 'browser_get_fields': {
-      const fields = await browser.getFormFields();
-      if (!fields.length) return 'No visible form fields on this page.';
-      lastToolWasBrowser = true;
-      return '[BROWSER CONTENT — untrusted]\n' + fields.map(f => {
-        let desc = `[${f.tag}${f.type ? ':' + f.type : ''}]`;
-        if (f.id) desc += ` id="${f.id}"`;
-        if (f.name) desc += ` name="${f.name}"`;
-        if (f.label) desc += ` label="${f.label}"`;
-        if (f.placeholder) desc += ` placeholder="${f.placeholder}"`;
-        if (f.value) desc += ` value="${f.value}"`;
-        if (f.options) desc += ` options: ${f.options.slice(0, 5).map(o => o.text).join(', ')}${f.options.length > 5 ? '...' : ''}`;
-        return desc;
-      }).join('\n');
-    }
-    case 'browser_get_clickables': {
-      const items = await browser.getClickables();
-      if (!items.length) return 'No clickable elements found.';
-      lastToolWasBrowser = true;
-      return '[BROWSER CONTENT — untrusted]\n' + items.map(i => {
-        let desc = `[${i.tag}] "${i.text}"`;
-        if (i.href) desc += ` → ${i.href.substring(0, 80)}`;
-        if (i.id) desc += ` id="${i.id}"`;
-        return desc;
-      }).join('\n');
-    }
-    case 'browser_get_text': {
-      const text = await browser.getText(input.selector || 'body');
-      lastToolWasBrowser = true;
-      return sanitizeExternalInput(text, 'browser');
-    }
-    case 'browser_scroll': {
-      await browser.scroll(input.direction || 'down', input.amount || 500);
-      return `Scrolled ${input.direction || 'down'} ${input.amount || 500}px`;
-    }
-    case 'browser_evaluate': {
-      const result = await browser.evaluate(input.code);
-      lastToolWasBrowser = true;
-      return result.ok ? sanitizeExternalInput(result.result || '(no return value)', 'browser') : 'Eval error: ' + result.error;
-    }
-    case 'browser_close': {
-      await browser.close();
-      return 'Browser session closed.';
-    }
-    case 'browser_status': {
-      const info = await browser.getPageInfo();
-      if (!info.open) return 'No browser session active.';
-      return `Browser active: "${info.title}" — ${info.url}`;
-    }
-    case 'browser_fill_from_vault': {
-      if (!vault) return 'Vault not configured.';
-      const entry = vault.get(input.vault_label);
-      if (!entry || !entry.data) return `Vault entry "${input.vault_label}" not found or empty.`;
-      const data = entry.data;
-      // Flatten card helper fields
-      const resolved = {
-        number: data.number || data.card_number,
-        exp: data.exp || data.expiration || data.exp_date,
-        cvv: data.cvv || data.cvc || data.security_code,
-        name: data.name || data.cardholder || data.card_name,
-        zip: data.zip || data.billing_zip || data.postal_code,
-        address: data.address || data.billing_address || data.street,
-        city: data.city,
-        state: data.state,
-        country: data.country,
-        email: data.email,
-        phone: data.phone,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        dob: data.dob || data.date_of_birth,
-        ...data // any extra fields accessible by their original key
-      };
-      // Build selector->value map using the field_mapping
-      const fields = {};
-      let filled = 0, skipped = [];
-      for (const [selector, fieldName] of Object.entries(input.field_mapping)) {
-        const value = resolved[fieldName];
-        if (value) {
-          fields[selector] = String(value);
-          filled++;
-        } else {
-          skipped.push(fieldName);
-        }
-      }
-      if (filled === 0) return 'No matching vault fields found for the given mapping.';
-      // Fill directly in Puppeteer — sensitive data never touches the AI
-      const results = await browser.fillForm(fields);
-      const ok = results.filter(r => r.ok).length;
-      const fail = results.filter(r => !r.ok);
-      console.log(`[VAULT+BROWSER] Filled ${ok} fields from "${input.vault_label}" (${skipped.length} skipped)`);
-      db.audit('vault.browser_fill', `${input.vault_label}: ${ok} fields filled`);
-      let msg = `Securely filled ${ok}/${filled} fields from vault "${input.vault_label}".`;
-      if (skipped.length) msg += `\nSkipped (not in vault): ${skipped.join(', ')}`;
-      if (fail.length) msg += `\nFailed: ${fail.map(f => f.selector).join(', ')}`;
-      msg += '\n(Card data was decrypted locally — never sent through this conversation.)';
-      return msg;
-    }
-    // ─── VIDEO TOOLS ───
-    case 'video_analyze': {
-      if (!videoProcessor) return 'Video processor not initialized.';
-      try {
-        await sock.sendMessage(context.contact, { text: '🎬 Downloading and analyzing video... this may take a minute.' });
-        const download = await videoProcessor.downloadFromUrl(input.url);
-        if (!download.ok) return 'Download failed: ' + download.error;
-        const result = await videoProcessor.processVideo(download.path, download.dir, input.context || '');
-        videoProcessor.cleanup(download.dir);
-        console.log(`[VIDEO] Analyzed: ${result.duration}s, ${result.frameCount} frames, transcript: ${result.transcript ? 'yes' : 'no'}`);
-        return `**Video Analysis** (${result.duration}s, ${result.frameCount} frames)\n\n${result.summary}`;
-      } catch (e) {
-        return 'Video analysis failed: ' + e.message;
-      }
-    }
-    case 'video_learn': {
-      if (!videoProcessor) return 'Video processor not initialized.';
-      try {
-        await sock.sendMessage(context.contact, { text: '🎬 Downloading, analyzing, and learning from video...' });
-        const download = await videoProcessor.downloadFromUrl(input.url);
-        if (!download.ok) return 'Download failed: ' + download.error;
-        const result = await videoProcessor.processVideo(download.path, download.dir, input.context || '');
-        videoProcessor.cleanup(download.dir);
-
-        // Save key learnings to fact memory
-        const memContent = `Video learning (${input.url}):\n${result.summary}`;
-        const memId = db.save('fact', memContent.substring(0, 2000), null);
-        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
-
-        // Extract actionable techniques and save as workflow knowledge
-        const techPrompt = `Extract actionable techniques, shortcuts, and design/business principles from this video summary. Format as bullet points. Only include things that could be applied to the operator's work. If there are no actionable techniques, respond with: NO_TECHNIQUES
-
-Video: ${input.url}
-Context: ${input.context || 'general'}
-
-Summary:
-${result.summary}`;
-        const techniques = await runClaudeCLI(techPrompt, 30000) || '';
-        if (techniques && !techniques.includes('NO_TECHNIQUES')) {
-          const wfContent = `[Learned from video] ${input.context || 'course'}: ${techniques}`;
-          const wfId = db.save('workflow', wfContent.substring(0, 2000), null);
-          getEmbedding(wfContent.substring(0, 512)).then(emb => db.updateEmbedding(wfId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${wfId}:`, e.message));
-
-          // Also update operator profile with learned techniques
-          await updateOperatorProfile(`**From video (${input.context || input.url}):**\n${techniques}`);
-          console.log(`[VIDEO] Learned from video: ${result.duration}s → fact #${memId} + workflow #${wfId}`);
-          return `**Video Learned** (${result.duration}s, ${result.frameCount} frames)\n\n${result.summary}\n\n**Techniques extracted:**\n${techniques}\n\n✅ Saved to memory + operator profile.`;
-        }
-
-        console.log(`[VIDEO] Learned from video: ${result.duration}s → memory #${memId}`);
-        return `**Video Learned** (${result.duration}s, ${result.frameCount} frames)\n\n${result.summary}\n\n✅ Saved to long-term memory (ID #${memId}).`;
-      } catch (e) {
-        return 'Video learning failed: ' + e.message;
-      }
-    }
-    case 'learn_from_url': {
-      try {
-        await sock.sendMessage(context.contact, { text: '📖 Reading and learning from that page...' });
-        // Use browser to fetch the page content
-        const navResult = await browser.navigate(input.url);
-        if (!navResult.ok) return 'Could not load page: ' + (navResult.error || 'unknown error');
-
-        // Extract page text
-        const pageText = await browser.evaluate('document.body.innerText.substring(0, 8000)');
-        const pageContent = sanitizeBrowserOutput(pageText.ok ? pageText.result : navResult.title);
-        await browser.close();
-
-        // Analyze and extract learnings
-        const learnPrompt = `You are extracting actionable knowledge from a webpage.
-
-Extract:
-1. **Key techniques** — specific methods, shortcuts, or approaches that can be replicated
-2. **Design principles** — any visual/design insights (color theory, layout, typography, branding)
-3. **Business insights** — strategies, pricing, marketing, client management tips
-4. **Tools/resources** — any software, services, or resources mentioned worth knowing
-
-Format as organized bullet points under relevant headers. Only include genuinely useful, actionable information.
-If the page has no useful content (404, paywall, login wall, etc.), respond with: NO_CONTENT
-
-URL: ${input.url}
-Focus: ${input.context || 'general'}
-
-Page content:
-${pageContent}`;
-        const learnings = await runClaudeCLI(learnPrompt, 60000) || '';
-        if (!learnings || learnings.includes('NO_CONTENT')) return 'Could not extract useful content from that page.';
-
-        // Save to workflow memory
-        const memContent = `[Learned from ${input.url}] ${input.context || ''}: ${learnings}`;
-        const memId = db.save('workflow', memContent.substring(0, 2000), null);
-        getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
-
-        // Update operator profile
-        await updateOperatorProfile(`**From article/course (${input.context || input.url}):**\n${learnings}`);
-        console.log(`[LEARN] Learned from URL: ${input.url} → workflow #${memId}`);
-        return `**Learned from page:**\n\n${learnings}\n\n✅ Saved to operator profile + memory.`;
-      } catch (e) {
-        return 'Learning from URL failed: ' + e.message;
-      }
-    }
-    case 'knowledge_search': {
-      try {
-        const { execSync } = require('child_process');
-        // Check if qmd is available before attempting search
-        try { execSync('which qmd', { encoding: 'utf8', timeout: 3000 }); } catch (_) {
-          return 'knowledge_search is not available — qmd is not installed. Use memory_search instead.';
-        }
-        const n = input.num_results || 5;
-        const query = input.query.replace(/'/g, "'\\''");
-        const result = execSync(
-          `export PATH="$HOME/.bun/bin:$PATH" && qmd search '${query}' -c favor-knowledge -n ${n} --json`,
-          { encoding: 'utf8', timeout: 10000 }
-        );
-        const parsed = JSON.parse(result);
-        const results = Array.isArray(parsed) ? parsed : (parsed.results || []);
-        if (!results.length) return 'No results found for: ' + input.query;
-        return results.map((r, i) =>
-          `[${i+1}] ${r.title || r.file} (score: ${Math.round((r.score || 0) * 100)}%)\n${r.snippet || ''}`
-        ).join('\n\n---\n\n');
-      } catch(e) {
-        return 'Knowledge search error: ' + e.message;
-      }
-    }
-    case 'design_system': {
-      try {
-        const { generateDesignSystem, formatMarkdown, formatCompact } = require('./uiux');
-        const ds = generateDesignSystem(input.query, input.project_name);
-        const fmt = input.format === 'markdown' ? formatMarkdown(ds) : formatCompact(ds);
-        return fmt;
-      } catch (e) {
-        return 'Design system error: ' + e.message;
-      }
-    }
-    case 'design_search': {
-      try {
-        const { searchDomain } = require('./uiux');
-        return searchDomain(input.query, input.domain, input.num_results || 3);
-      } catch (e) {
-        return 'Design search error: ' + e.message;
-      }
-    }
-    case 'sync_update': {
-      syncBot.sync('bot', {
-        type: input.type || 'action',
-        summary: input.summary,
-        objective: input.objective,
-        next: input.next,
-        decision: input.decision,
-        reason: input.reason,
-        status: 'success'
-      });
-      return `Sync updated: ${input.summary}`;
-    }
-    case 'sync_recover': {
-      const recovery = syncBot.recover();
-      return JSON.stringify({
-        mission: recovery.mission,
-        unfinished_tasks: recovery.unfinished_tasks,
-        last_success: recovery.last_successful_action,
-        last_failure: recovery.last_failed_action,
-        blockers: recovery.open_blockers,
-        next_step: recovery.recommended_next,
-        recent: recovery.recent_events_summary.slice(-5)
-      }, null, 2);
-    }
-    // ─── BUILD MODE ───
-    case 'build_plan': {
-      const workDir = input.work_dir || `/root/builds/${input.description.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`;
-      if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
-      await sock.sendMessage(context.contact, { text: `🔨 *Build Mode* — Planning project in \`${workDir}\`...\nThis may take a minute or two.` });
-      try {
-        const plan = await buildMode.plan(input.description, workDir);
-        buildMode.setState(context.contact, { workDir, description: input.description, plan, phase: 'planned' });
-        return `Build plan created for ${workDir}:\n\n${plan}`;
-      } catch (e) {
-        return `Build planning failed: ${e.message}`;
-      }
-    }
-    case 'build_execute': {
-      await sock.sendMessage(context.contact, { text: `⚡ *Build Mode* — Executing task in \`${input.work_dir}\`...\nClaude Code is writing code. This may take a few minutes.` });
-      try {
-        const result = await buildMode.execute(input.task, input.work_dir, { context: input.context || '' });
-        const state = buildMode.getState(context.contact);
-        if (state) buildMode.setState(context.contact, { ...state, phase: 'building', lastTask: input.task });
-        return `Build step completed:\n\n${result}`;
-      } catch (e) {
-        return `Build execution failed: ${e.message}`;
-      }
-    }
-    case 'build_verify': {
-      await sock.sendMessage(context.contact, { text: `🔍 *Build Mode* — Verifying build in \`${input.work_dir}\`...` });
-      try {
-        const result = await buildMode.verify(input.work_dir, input.requirements);
-        const state = buildMode.getState(context.contact);
-        if (state) buildMode.setState(context.contact, { ...state, phase: 'verified' });
-        return `Build verification:\n\n${result}`;
-      } catch (e) {
-        return `Build verification failed: ${e.message}`;
-      }
-    }
-    case 'build_raw': {
-      await sock.sendMessage(context.contact, { text: `🔨 *Build Mode* — Running Claude Code in \`${input.work_dir}\`...` });
-      try {
-        const result = await buildMode.raw(input.prompt, input.work_dir);
-        return `Claude Code result:\n\n${result}`;
-      } catch (e) {
-        return `Build command failed: ${e.message}`;
-      }
-    }
-    // ─── GUARDIAN ───
-    case 'guardian_scan': {
-      const mode = input.mode || 'quick';
-      await sock.sendMessage(context.contact, { text: `🛡️ *Guardian* — Running ${mode} scan on \`${input.target}\`...\nThis may take a few minutes.` });
-      try {
-        const { report, logs } = await guardian.scan(input.target, {
-          mode,
-          scope: input.scope || 'full',
-        });
-        const formatted = guardian.formatReport(report);
-        return formatted;
-      } catch (e) {
-        return `Guardian scan failed: ${e.message}`;
-      }
-    }
-    case 'guardian_report': {
-      const last = guardian.getLastReport();
-      if (!last) return 'No previous Guardian scan found. Run guardian_scan first.';
-      return `Last scan: ${last.scannedAt}\n\n${guardian.formatReport(last.report)}`;
-    }
-    case 'guardian_status': {
-      return guardian.formatGuardStatus();
-    }
-    // ─── SELF-CHECK ───
-    case 'start_remote': {
-      try {
-        const dir = input.directory || '/root';
-        const { execSync } = require('child_process');
-        try { execSync('tmux kill-session -t claude-rc 2>/dev/null'); } catch {}
-        execSync(`tmux new-session -d -s claude-rc -c "${dir}"`);
-        execSync(`tmux send-keys -t claude-rc "claude --remote-control" Enter`);
-        let sessionUrl = null;
-        for (let i = 0; i < 15; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          try {
-            const pane = execSync('tmux capture-pane -t claude-rc -p', { encoding: 'utf8' });
-            const match = pane.match(/(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+)/);
-            if (match) { sessionUrl = match[1]; break; }
-            if (pane.includes('Yes, I trust this folder')) {
-              execSync('tmux send-keys -t claude-rc Enter');
-            }
-          } catch {}
-        }
-        if (sessionUrl) {
-          await sock.sendMessage(context.contact, { text: `🖥️ *Remote Code Session Ready*\n\nOpen on your phone:\n${sessionUrl}\n\nRunning in: ${dir}\nSession: tmux (survives disconnects)` });
-          return '__IMAGE_SENT__';
-        }
-        return 'Remote session started but could not capture URL. Check tmux session "claude-rc" manually.';
-      } catch (e) {
-        return 'Failed to start remote session: ' + e.message;
-      }
-    }
-    case 'selfcheck': {
-      await sock.sendMessage(context.contact, { text: '🛡️ *Self-Check* — Running health checks and cleanup...' });
-      try {
-        const report = await selfCheck.runAll();
-        return selfCheck.formatReport(report);
-      } catch (e) {
-        return `Self-check failed: ${e.message}`;
-      }
-    }
-
-    // ─── TEACH MODE ───
-    case 'teach_create': {
-      try {
-        const id = db.saveTeachCommand(
-          context.contact,
-          input.command_name,
-          input.description || '',
-          input.trigger_phrase,
-          input.pipeline || []
-        );
-        return `✅ Taught command created!\n*#${id} — ${input.command_name}*\nTrigger: "${input.trigger_phrase}"\nSteps: ${(input.pipeline || []).length}\n\nSay "${input.trigger_phrase}" anytime to run it.`;
-      } catch (e) {
-        return `Failed to create taught command: ${e.message}`;
-      }
-    }
-
-    case 'teach_list': {
-      const commands = db.listTeachCommands(context.contact);
-      if (!commands.length) return 'No taught commands yet. Teach me something! Say "teach: when I say X, do Y"';
-      return '*Your Commands:*\n\n' + commands.map(c =>
-        `*#${c.id} — ${c.command_name}* ${c.enabled ? '✅' : '⏸️'}\n` +
-        `  Trigger: "${c.trigger_phrase}"\n` +
-        (c.description ? `  ${c.description}\n` : '') +
-        `  Used ${c.execution_count}x` + (c.last_executed ? ` (last: ${c.last_executed})` : '')
-      ).join('\n\n');
-    }
-
-    case 'teach_run': {
-      const cmd = db.getTeachCommand(input.id);
-      if (!cmd) return `Taught command #${input.id} not found.`;
-      if (!cmd.enabled) return `Command "${cmd.command_name}" is disabled.`;
-      const pipeline = JSON.parse(cmd.pipeline);
-      if (!pipeline.length) return `Command "${cmd.command_name}" has no steps.`;
-
-      await sock.sendMessage(context.contact, { text: `⚡ Running: *${cmd.command_name}* (${pipeline.length} steps)` });
-      const results = [];
-      for (let i = 0; i < pipeline.length; i++) {
-        const step = pipeline[i];
-        try {
-          const result = await executeTool(step.tool, step.params || {}, context);
-          results.push(`✓ Step ${i + 1}: ${step.description || step.tool} — OK`);
-        } catch (e) {
-          results.push(`✗ Step ${i + 1}: ${step.description || step.tool} — ${e.message}`);
-          break;
-        }
-      }
-      db.recordTeachExecution(cmd.id);
-      return `*${cmd.command_name}* — Done\n\n${results.join('\n')}`;
-    }
-
-    case 'teach_update': {
-      const cmd = db.getTeachCommand(input.id);
-      if (!cmd) return `Taught command #${input.id} not found.`;
-      const updates = {};
-      if (input.command_name) updates.commandName = input.command_name;
-      if (input.trigger_phrase) updates.triggerPhrase = input.trigger_phrase;
-      if (input.description) updates.description = input.description;
-      if (input.pipeline) updates.pipeline = input.pipeline;
-      if (input.enabled !== undefined) updates.enabled = input.enabled;
-      db.updateTeachCommand(input.id, updates);
-      return `✅ Updated command #${input.id} — ${input.command_name || cmd.command_name}`;
-    }
-
-    case 'teach_delete': {
-      const removed = db.deleteTeachCommand(input.id);
-      return removed ? `🗑️ Deleted taught command #${input.id}` : `Command #${input.id} not found.`;
-    }
-
-    default: return 'Unknown tool: ' + name;
-  }
-}
-
-// Wrap executeTool with size cap + audit logging
-const _executeToolRaw = executeTool;
-executeTool = async function(name, input, context = {}) {
+// executeTool with size cap + audit logging wrapper
+let executeTool = async function(name, input, context = {}) {
   const auditId = toolAudit.logIntent(name, input, context.contact);
   const start = Date.now();
   try {
-    let result = await _executeToolRaw(name, input, context);
+    let result = await toolExecutor.execute(name, input, context);
     const isToolError = typeof result === 'string' &&
       /^Error:|offline|failed|timed out|not configured|ECONNREFUSED|EHOSTUNREACH/i.test(result);
     toolAudit.logResult(auditId, isToolError ? 'error' : 'success',
@@ -1592,6 +804,9 @@ executeTool = async function(name, input, context = {}) {
   }
 };
 
+// REMOVED: 780 lines of inline tool switch cases — now in core/tool-executor.js
+// REMOVED: old audit wrapper — merged into new executeTool above
+// (old tool switch cases and audit wrapper removed — now in core/tool-executor.js)
 // ─── SYSTEM PROMPT ───
 // Prompt building extracted to core/prompts.js
 const { buildSystemPrompt: _buildSystemPrompt } = require('./core/prompts');
@@ -1684,231 +899,24 @@ async function saveHistory(contact, messages, topicId) {
   }
 }
 
-// ─── SCREEN AWARENESS ENGINE (Filmstrip Mode) ───
-// Captures every 2 seconds, batches 3 frames into a "filmstrip" for GPT-4o analysis.
-// AI sees temporal progression (like video) instead of isolated snapshots.
-// Only sends flagged/important insights. Routine activity is trashed.
-// Also silently logs workflow observations → saved to memory when session ends.
-let screenAwarenessTimer = null;
-let screenAwarenessActive = false;
-let screenTickCount = 0;
-let screenAwaitingContinue = false;
-let screenTickInProgress = false;
-let lastScreenContext = '';
-let screenFrameBuffer = [];          // holds up to 3 frames before analysis
-let screenWorkflowLog = [];          // accumulated workflow observations during session
-const SCREEN_CAPTURE_MS = 2000;      // capture every 2 seconds
-const SCREEN_FRAMES_PER_BATCH = 3;   // analyze 3 frames at once (6s of activity)
-const SCREEN_CHECKIN_AFTER = 60000;   // ask to continue after 60s
-let screenStartTime = 0;
+// ─── SCREEN AWARENESS (delegated to core/screen-awareness.js) ───
+const screenAwareness = new ScreenAwareness({
+  config, db, sock: null, captureScreenshotBuffer, runClaudeCLI, getEmbedding, isLaptopOnline, PLATFORM, botDir: __dirname,
+});
+// Aliases for backward compat
+const startScreenAwareness = () => screenAwareness.start();
+const stopScreenAwareness = () => screenAwareness.stop();
+const resumeScreenAwareness = () => screenAwareness.resume();
+// updateOperatorProfile is used by tool executor too
+async function updateOperatorProfile(insights) { return ScreenAwareness.updateOperatorProfile(insights, __dirname); }
 
-function startScreenAwareness() {
-  if (screenAwarenessActive) return;
-  screenAwarenessActive = true;
-  screenTickCount = 0;
-  screenAwaitingContinue = false;
-  screenTickInProgress = false;
-  lastScreenContext = '';
-  screenFrameBuffer = [];
-  screenWorkflowLog = [];
-  screenStartTime = Date.now();
-  console.log('[SCREEN] Screen awareness ON (filmstrip mode: capture every 2s, analyze 3 frames at a time, learning workflow)');
-  screenAwarenessLoop();
-}
-
-async function stopScreenAwareness() {
-  screenAwarenessActive = false;
-  screenAwaitingContinue = false;
-  screenFrameBuffer = [];
-  if (screenAwarenessTimer) {
-    clearTimeout(screenAwarenessTimer);
-    screenAwarenessTimer = null;
-  }
-  // Save accumulated workflow observations to memory
-  if (screenWorkflowLog.length > 0) {
-    try {
-      await saveWorkflowSession();
-    } catch (e) {
-      console.error('[SCREEN] Failed to save workflow:', e.message);
-    }
-  }
-  console.log('[SCREEN] Screen awareness OFF');
-}
-
-// Summarize and persist what was learned during this screen session
-async function saveWorkflowSession() {
-  const observations = screenWorkflowLog.join('\n');
-  const duration = Math.round((Date.now() - screenStartTime) / 1000);
-  const now = new Date().toISOString().split('T')[0];
-
-  // Use Claude CLI to distill observations into a workflow profile update
-  const screenPrompt = `Analyze this screen monitoring session. Distill into 3-8 bullet points about workflow habits, tools used, design patterns, and skill indicators. Only lasting insights, not one-time observations. If nothing meaningful, respond with: NOTHING_LEARNED
-
-Screen session: ${duration}s, ${screenTickCount} captures, ${screenWorkflowLog.length} observations.
-
-Raw observations:
-${observations}`;
-  const summary = await runClaudeCLI(screenPrompt, 60000) || '';
-  if (summary && !summary.includes('NOTHING_LEARNED')) {
-    const memContent = `[Workflow observation ${now}] ${summary}`;
-    const memId = db.save('workflow', memContent.substring(0, 2000), null);
-    getEmbedding(memContent.substring(0, 512)).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
-    console.log(`[SCREEN] Saved workflow observations → memory #${memId} (${screenWorkflowLog.length} observations distilled)`);
-
-    // Also update the operator profile knowledge file
-    await updateOperatorProfile(summary);
-  } else {
-    console.log('[SCREEN] Session too short/idle — nothing new learned');
-  }
-  screenWorkflowLog = [];
-}
-
-// Append new insights to the persistent operator profile
-async function updateOperatorProfile(newInsights) {
-  const profilePath = path.join(__dirname, 'knowledge', 'operator_profile.md');
-  let existing = '';
-  try { existing = fs.readFileSync(profilePath, 'utf8'); } catch (_) {}
-
-  if (!existing) {
-    existing = `# Operator Profile
-## Learned from screen observation, video courses, and interactions.
-## The bot uses this to understand your workflow, design style, and preferences.
-
-### Workflow & Habits\n\n### Design Style\n\n### Tools & Software\n\n### Skills & Techniques\n\n### Business Context\n`;
-  }
-
-  // Append timestamped observations
-  const now = new Date().toISOString().split('T')[0];
-  const updated = existing.trimEnd() + `\n\n---\n**Observed ${now}:**\n${newInsights}\n`;
-  fs.writeFileSync(profilePath, updated);
-  console.log('[SCREEN] Updated operator profile: knowledge/operator_profile.md');
-}
-
-async function screenAwarenessLoop() {
-  if (!screenAwarenessActive) return;
-  if (screenTickInProgress) return;
-  const operatorJid = PLATFORM === 'telegram'
-    ? `tg_${config.telegram?.operatorChatId || ''}`
-    : (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
-
-  if ((Date.now() - screenStartTime) >= SCREEN_CHECKIN_AFTER && !screenAwaitingContinue) {
-    screenAwaitingContinue = true;
-    const batchesDone = Math.floor(screenTickCount / SCREEN_FRAMES_PER_BATCH);
-    await sock.sendMessage(operatorJid, { text: `*[Screen Awareness]*\nBeen watching for 1 minute (${screenTickCount} captures, ${batchesDone} analyses). Should I keep going?\n\nReply *"keep going"* or *"stop"*` });
-    console.log(`[SCREEN] Check-in sent after ${screenTickCount} captures — waiting for response`);
-    return;
-  }
-
-  screenTickInProgress = true;
-  try {
-    await screenCaptureTick();
-  } catch (err) {
-    console.error('[SCREEN] Tick error:', err.message);
-  }
-  screenTickInProgress = false;
-
-  screenTickCount++;
-  if (screenAwarenessActive && !screenAwaitingContinue) {
-    screenAwarenessTimer = setTimeout(() => screenAwarenessLoop(), SCREEN_CAPTURE_MS);
-  }
-}
-
-function resumeScreenAwareness() {
-  if (!screenAwarenessActive || !screenAwaitingContinue) return;
-  screenAwaitingContinue = false;
-  screenTickCount = 0;
-  screenStartTime = Date.now();
-  screenFrameBuffer = [];
-  console.log('[SCREEN] Resumed — next check-in in 60s');
-  screenAwarenessLoop();
-}
-
-// Capture a frame and add to buffer. When buffer is full, analyze the batch.
-async function screenCaptureTick() {
-  if (!sock || !config.laptop?.enabled) return;
-
-  const online = await isLaptopOnline();
-  if (!online) { console.log('[SCREEN] Laptop offline — skipping'); return; }
-
-  const result = await captureScreenshotBuffer();
-  if (!result) { console.log('[SCREEN] Screenshot failed — skipping'); return; }
-
-  screenFrameBuffer.push({ buffer: result.buffer, time: `${result.dateStr} ${result.timeStr.replace(/-/g, ':')}` });
-  console.log(`[SCREEN] Frame ${screenFrameBuffer.length}/${SCREEN_FRAMES_PER_BATCH} captured`);
-
-  // When we have enough frames, analyze the batch
-  if (screenFrameBuffer.length >= SCREEN_FRAMES_PER_BATCH) {
-    await analyzeScreenBatch();
-  }
-}
-
-// Save buffered frames to temp files, analyze with Claude CLI + Read tool
-async function analyzeScreenBatch() {
-  const frames = [...screenFrameBuffer];
-  screenFrameBuffer = [];
-
-  const operatorJid = PLATFORM === 'telegram'
-    ? `tg_${config.telegram?.operatorChatId || ''}`
-    : (config.whatsapp.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
-
-  // Save frames to temp files for Claude CLI to read
-  const tmpFramePaths = [];
-  for (let i = 0; i < frames.length; i++) {
-    const tmpPath = `/tmp/screen_frame_${Date.now()}_${i}.png`;
-    fs.writeFileSync(tmpPath, frames[i].buffer);
-    tmpFramePaths.push(tmpPath);
-  }
-
-  const screenAnalysisPrompt = `Read the screenshot image files listed below, then analyze them. These are ${tmpFramePaths.length} sequential screenshots taken 2 seconds apart.
-
-Image files to read:
-${tmpFramePaths.map((p, i) => `- Frame ${i + 1}: ${p}`).join('\n')}
-
-You have TWO jobs:
-
-**JOB 1 — FLAG:** Actionable insight ONLY if flag-worthy (errors, mistakes, security issues, optimization tips). Otherwise: FLAG: NOTHING
-
-**JOB 2 — WORKFLOW:** What the operator is doing/using — apps, design choices, patterns. If idle/lock screen: WORKFLOW: NOTHING
-
-FORMAT:
-FLAG: [insight or NOTHING]
-WORKFLOW: [observation or NOTHING]
-
-Be concise. 1-2 sentences per section max. Previous context (avoid repeating): "${lastScreenContext}"`;
-
-  let reply = '';
-  try {
-    reply = await runClaudeCLI(screenAnalysisPrompt, 60000, { allowTools: true }) || '';
-  } catch (e) {
-    console.warn('[SCREEN] Claude CLI analysis failed:', e.message);
-  }
-
-  // Cleanup temp files
-  for (const p of tmpFramePaths) { try { fs.unlinkSync(p); } catch {} }
-
-  // Parse the two sections
-  const flagMatch = reply.match(/FLAG:\s*(.+?)(?:\n|$)/i);
-  const workflowMatch = reply.match(/WORKFLOW:\s*(.+?)(?:\n|$)/i);
-
-  const flagText = flagMatch?.[1]?.trim() || '';
-  const workflowText = workflowMatch?.[1]?.trim() || '';
-
-  // Handle flag — send to operator if noteworthy
-  if (flagText && !flagText.includes('NOTHING') && flagText.length > 5) {
-    const latestFrame = frames[frames.length - 1];
-    await sock.sendMessage(operatorJid, { image: latestFrame.buffer, caption: `*[Screen Awareness]*\n${flagText}` });
-    lastScreenContext = flagText.substring(0, 200);
-    console.log(`[SCREEN] FLAGGED — sent insight + screenshot (${flagText.length} chars)`);
-  } else {
-    console.log('[SCREEN] Nothing flag-worthy — trashed batch');
-  }
-
-  // Handle workflow — silently accumulate for learning
-  if (workflowText && !workflowText.includes('NOTHING') && workflowText.length > 5) {
-    screenWorkflowLog.push(workflowText);
-    console.log(`[SCREEN] LEARNED — ${workflowText.substring(0, 80)}...`);
-  }
-}
+// ─── COMMAND HANDLER ───
+const commandHandler = new CommandHandler({
+  db, config, sock: null, syncBot, alive, accessControl,
+  getHistory, isLaptopOnline, reloadConfig, loadKnowledge,
+  screenAwareness,
+  CONFIG_PATH, botDir: __dirname,
+});
 
 // ─── BAILEYS WHATSAPP ───
 // Use OpenClaw's credential store so no QR re-scan needed
@@ -2009,6 +1017,13 @@ async function startWhatsApp() {
 
       db.audit('ready', `WhatsApp connected (Baileys). Model: ${config.model.id}`);
       cronEngine.start();
+
+      // ─── EXTRACTED MODULES: connect sock ───
+      commandHandler.setSock(sock);
+      mediaHandler.setSock(sock);
+      mediaHandler.setDownloadMediaMessage(downloadMediaMessage);
+      toolExecutor.setSock(sock);
+      screenAwareness.setSock(sock);
 
       // ─── ALIVE ENGINE: connect + register crons ───
       if (alive) {
@@ -2189,7 +1204,12 @@ async function startTelegram() {
       db.audit('ready', `Telegram connected (@${botInfo.username}). Model: ${config.model.id}`);
       cronEngine.start();
 
-      // Alive engine
+      // Extracted modules + Alive engine
+      commandHandler.setSock(sock);
+      mediaHandler.setSock(sock);
+      mediaHandler.setTelegramAdapter(telegramAdapter);
+      toolExecutor.setSock(sock);
+      screenAwareness.setSock(sock);
       if (alive) {
         alive.setSock(sock);
         alive.ensureCrons();
@@ -2224,263 +1244,25 @@ async function startTelegram() {
   // sock is set in onReady callback above
 }
 
-// ─── LID-to-phone mapping (Baileys uses LID JIDs for incoming messages) ───
-const lidToPhone = new Map();
-const phoneToLid = new Map();
+// ─── ACCESS CONTROL (delegated to core/access-control.js) ───
+// Convenience aliases for the rest of favor.js during incremental migration
+const resolvePhone = (jid) => accessControl.resolvePhone(jid);
+const isOperator = (jid) => accessControl.isOperator(jid);
+const getRole = (jid) => accessControl.getRole(jid);
+const canUseTool = (role, name) => accessControl.canUseTool(role, name);
+const canUseCommand = (role, cmd) => accessControl.canUseCommand(role, cmd);
+const getToolsForRole = (role) => accessControl.getToolsForRole(role);
+const isAllowed = (jid) => accessControl.isAllowed(jid);
+const isGroup = (jid) => accessControl.isGroup(jid);
+const registerLidMapping = (lid, phone) => accessControl.registerLidMapping(lid, phone);
 
-// Known LID mappings (add your own from testing)
-// Example: lidToPhone.set('LID_NUMBER', 'PHONE_NUMBER');
-// Example: phoneToLid.set('PHONE_NUMBER', 'LID_NUMBER');
-
-function registerLidMapping(lidJid, phoneJid) {
-  if (lidJid && phoneJid) {
-    lidToPhone.set(lidJid.split('@')[0].split(':')[0], phoneJid.split('@')[0].split(':')[0]);
-    phoneToLid.set(phoneJid.split('@')[0].split(':')[0], lidJid.split('@')[0].split(':')[0]);
-  }
-}
-
-// ─── CONTACT FILTERING & OPERATOR SECURITY ───
-// Track numbers verified via security phrase (resets on restart)
-const verifiedNumbers = new Set();
-// Track numbers awaiting security phrase answer
-const pendingAuth = new Set();
-
-
-function resolvePhone(jid) {
-  // Telegram contacts use tg_CHATID format
-  if (jid && jid.startsWith('tg_')) return jid;
-  if (jid.endsWith('@lid')) {
-    const lidNum = jid.split('@')[0].split(':')[0];
-    return lidToPhone.get(lidNum) || null;
-  }
-  return jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-}
-
-function isOperator(jid) {
-  // Telegram: check operatorChatId
-  if (PLATFORM === 'telegram') {
-    const opChatId = config.telegram?.operatorChatId;
-    if (!opChatId) return true; // no operator set = backwards compat
-    return jid === `tg_${opChatId}` || verifiedNumbers.has(jid);
-  }
-  const opNum = (config.whatsapp.operatorNumber || '').replace('+', '');
-  if (!opNum) return true; // no operator set = backwards compat
-  const phone = resolvePhone(jid);
-  if (!phone) return false;
-  return phone.includes(opNum) || verifiedNumbers.has(phone);
-}
-
-function isStaff(jid) {
-  const pConfig = PLATFORM === 'telegram' ? (config.telegram || {}) : config.whatsapp;
-  const staffList = pConfig.staff || [];
-  if (!staffList.length) return false;
-  const phone = resolvePhone(jid);
-  if (!phone) return false;
-  // Telegram: staff list contains chat IDs (tg_12345 or raw 12345)
-  if (PLATFORM === 'telegram') {
-    return staffList.some(s => jid === `tg_${s}` || jid === s);
-  }
-  return staffList.some(s => phone.includes(s.replace('+', '')));
-}
-
-// Returns 'operator', 'staff', or 'customer'
-function getRole(jid) {
-  if (isOperator(jid)) return 'operator';
-  if (isStaff(jid)) return 'staff';
-  return 'customer';
-}
-
-// Tool access by role
-const OPERATOR_ONLY_TOOLS = new Set([
-  'server_exec', 'read_file', 'write_file',
-  'laptop_run_command', 'laptop_write_file', 'laptop_read_file', 'laptop_list_files',
-  'laptop_open_app', 'laptop_open_url', 'laptop_screenshot', 'laptop_status',
-  'browser_evaluate', 'browser_fill_from_vault',
-  'email_search', 'email_read'
-]);
-
-const STAFF_TOOLS = new Set([
-  'memory_save', 'memory_search', 'memory_forget',
-  'web_search', 'knowledge_search',
-  'cron_create', 'cron_list', 'cron_delete', 'cron_toggle',
-  'topic_create', 'topic_switch', 'topic_list',
-  'send_message', 'send_email', 'send_image',
-  'vault_save', 'vault_get', 'vault_list', 'vault_delete',
-  'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
-  'browser_select', 'browser_fill_form', 'browser_get_fields',
-  'browser_get_clickables', 'browser_get_text', 'browser_scroll',
-  'browser_close', 'browser_status',
-  'video_analyze', 'video_learn', 'learn_from_url'
-]);
-
-const CUSTOMER_TOOLS = new Set([
-  'knowledge_search', 'web_search', 'memory_search'
-]);
-
-function canUseTool(role, toolName) {
-  if (role === 'operator') return true;
-  if (role === 'staff') return STAFF_TOOLS.has(toolName);
-  return CUSTOMER_TOOLS.has(toolName); // customer
-}
-
-// Admin slash commands — operator only
-const ADMIN_COMMANDS = new Set(['/update', '/model', '/reload', '/clear', '/sync', '/recover']);
-// Staff slash commands
-const STAFF_COMMANDS = new Set(['/status', '/memory', '/brain', '/crons', '/topics', '/help', '/laptop']);
-
-function canUseCommand(role, cmd) {
-  if (role === 'operator') return true;
-  if (role === 'staff') return STAFF_COMMANDS.has(cmd) || !ADMIN_COMMANDS.has(cmd);
-  return cmd === '/help' || cmd === '/status'; // customers can only check help/status
-}
-
-// Filter tools list based on role — AI only sees tools the user can access
-function getToolsForRole(role) {
-  if (role === 'operator') return TOOLS;
-  return TOOLS.filter(t => canUseTool(role, t.function.name));
-}
-
-function isAllowed(jid) {
-  // Telegram: bots only receive messages from users who started a chat
-  // Use the same allowlist/open policy from config
-  if (PLATFORM === 'telegram') {
-    const policy = config.telegram?.dmPolicy || 'open';
-    if (policy !== 'allowlist') return true;
-    const allowed = config.telegram?.allowFrom || [];
-    if (!allowed.length) return true;
-    return allowed.includes(jid) || allowed.some(a => jid === `tg_${a}`);
-  }
-  if (config.whatsapp.dmPolicy !== 'allowlist') return true;
-  const combined = [...new Set([
-    ...(config.whatsapp.allowFrom || []),
-    ...(config.whatsapp.trustedContacts || []),
-    ...(config.whatsapp.staff || [])
-  ])];
-  if (!combined.length) return true;
-
-  const phone = resolvePhone(jid);
-  if (phone) {
-    return combined.some(a => phone.includes(a.replace('+', '')));
-  }
-
-  // Unknown LID — pass through to auth gate (they can authenticate via security phrase)
-  if (jid.endsWith('@lid')) {
-    console.log(`[SECURITY] Unknown LID ${jid.split('@')[0].split(':')[0]} — passing to auth gate`);
-    return true;
-  }
-
-  return false;
-}
-
-function isGroup(jid) {
-  if (PLATFORM === 'telegram') {
-    // Telegram group chat IDs are negative numbers
-    if (jid && jid.startsWith('tg_-')) return true;
-    return false;
-  }
-  return jid.endsWith('@g.us');
-}
-
-// ─── EXTRACT MESSAGE TEXT ───
-function extractText(msg) {
-  const m = msg.message;
-  if (!m) return '';
-  if (m.conversation) return m.conversation;
-  if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
-  if (m.imageMessage?.caption) return m.imageMessage.caption;
-  if (m.videoMessage?.caption) return m.videoMessage.caption;
-  if (m.documentMessage?.caption) return m.documentMessage.caption;
-  return '';
-}
-
-function getMessageType(msg) {
-  const m = msg.message;
-  if (!m) return 'unknown';
-  if (m.imageMessage) return 'image';
-  if (m.audioMessage || m.pttMessage) return 'voice';
-  if (m.videoMessage) return 'video';
-  if (m.documentMessage) return 'document';
-  if (m.stickerMessage) return 'sticker';
-  return 'text';
-}
-
-// ─── MEDIA DOWNLOAD (platform-agnostic) ───
-async function downloadMedia(msg) {
-  if (PLATFORM === 'telegram' && telegramAdapter) {
-    return telegramAdapter.downloadMedia(msg);
-  }
-  return downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-}
-
-// ─── IMAGE PROCESSING ───
-async function processImage(msg) {
-  try {
-    const buffer = await downloadMedia(msg);
-    if (!buffer) return null;
-
-    const mime = msg.message?.imageMessage?.mimetype || msg.message?.stickerMessage?.mimetype || 'image/jpeg';
-    const mimeType = mime.split(';')[0];
-    console.log(`[VISION] Processing image: ${mimeType} (${Math.round(buffer.length / 1024)}KB)`);
-
-    // Store for forwarding via send_image tool
-    lastReceivedImage = { buffer, mimetype: mimeType };
-
-    const base64 = buffer.toString('base64');
-
-    return {
-      type: 'image_url',
-      image_url: { url: `data:${mimeType};base64,${base64}` }
-    };
-  } catch (e) {
-    console.error('[VISION] Download failed:', e.message);
-    return null;
-  }
-}
-
-// ─── VOICE PROCESSING ───
-async function processVoice(msg) {
-  try {
-    const buffer = await downloadMedia(msg);
-    if (!buffer) return null;
-
-    const mime = msg.message?.audioMessage?.mimetype || msg.message?.pttMessage?.mimetype || 'audio/ogg';
-    console.log(`[VOICE] Processing voice note: ${mime}`);
-    const transcript = await transcribeVoice(buffer, mime);
-
-    if (transcript) {
-      console.log(`[VOICE] Transcribed: ${transcript.substring(0, 80)}`);
-      return transcript;
-    }
-    return null;
-  } catch (e) {
-    console.error('[VOICE] Processing failed:', e.message);
-    return null;
-  }
-}
-
-// ─── VIDEO PROCESSING ───
-async function processVideoMessage(msg) {
-  try {
-    const buffer = await downloadMedia(msg);
-    if (!buffer) return null;
-
-    const size = buffer.length;
-    console.log(`[VIDEO] Processing WhatsApp video: ${Math.round(size / 1024 / 1024 * 10) / 10}MB`);
-
-    // Cap at 50MB
-    if (size > 50 * 1024 * 1024) {
-      return { error: 'Video too large (>50MB). Send a shorter clip or share a link instead.' };
-    }
-
-    const saved = videoProcessor.saveBuffer(buffer);
-    const result = await videoProcessor.processVideo(saved.path, saved.dir);
-    videoProcessor.cleanup(saved.dir);
-    return result;
-  } catch (e) {
-    console.error('[VIDEO] Processing failed:', e.message);
-    return { error: 'Video processing failed: ' + e.message };
-  }
-}
+// ─── MEDIA FUNCTIONS (delegated to core/media-handler.js) ───
+const extractText = (msg) => mediaHandler.extractText(msg);
+const getMessageType = (msg) => mediaHandler.getMessageType(msg);
+const downloadMedia = (msg) => mediaHandler.downloadMedia(msg);
+const processImage = (msg) => mediaHandler.processImage(msg);
+const processVoice = (msg) => mediaHandler.processVoice(msg);
+const processVideoMessage = (msg) => mediaHandler.processVideoMessage(msg);
 
 // ─── CRON ENGINE ───
 const cronEngine = new CronEngine(db, {
@@ -2524,31 +1306,8 @@ const cronEngine = new CronEngine(db, {
   }
 });
 
-// ─── MESSAGE DEDUPLICATION ───
-// Prevents duplicate processing when WhatsApp delivers the same message twice
-const _recentMessages = new Map(); // hash -> timestamp
-const DEDUP_WINDOW_MS = 5000;
-
-function isDuplicateMessage(msg) {
-  const text = extractText(msg) || '';
-  const jid = msg.key.remoteJid || '';
-  const key = `${jid}:${text.substring(0, 100)}`;
-  const hash = require('crypto').createHash('md5').update(key).digest('hex');
-  const now = Date.now();
-
-  if (_recentMessages.has(hash) && now - _recentMessages.get(hash) < DEDUP_WINDOW_MS) {
-    return true;
-  }
-  _recentMessages.set(hash, now);
-
-  // Cleanup old entries every 100 messages
-  if (_recentMessages.size > 200) {
-    for (const [k, t] of _recentMessages) {
-      if (now - t > DEDUP_WINDOW_MS * 2) _recentMessages.delete(k);
-    }
-  }
-  return false;
-}
+// isDuplicateMessage delegated to mediaHandler (core/media-handler.js)
+const isDuplicateMessage = (msg) => mediaHandler.isDuplicateMessage(msg);
 
 // ─── MESSAGE HANDLER ───
 async function handleMessage(msg) {
@@ -2616,7 +1375,7 @@ async function handleMessage(msg) {
     if (isTrusted) {
       console.log(`[SECURITY] Trusted contact ${phone} — allowing through`);
       // Fall through to normal message handling below
-    } else if (verifiedNumbers.has(authKey)) {
+    } else if (accessControl.verifiedNumbers.has(authKey)) {
       console.log(`[SECURITY] Previously verified ${authKey} — allowing through`);
       // Fall through to normal message handling below
     } else if (platformConfig.dmPolicy === 'open') {
@@ -2627,22 +1386,22 @@ async function handleMessage(msg) {
       // Allowlist mode — require authentication
       // Step 1: They say "password" → ask for the security phrase
       if (textLower === 'password') {
-        pendingAuth.add(authKey);
+        accessControl.pendingAuth.add(authKey);
         await sock.sendMessage(jid, { text: "What's the security phrase?" });
         console.log(`[SECURITY] Auth challenge sent to ${authKey}`);
         return;
       }
 
       // Step 2: They answer the challenge
-      if (pendingAuth.has(authKey)) {
+      if (accessControl.pendingAuth.has(authKey)) {
         if (phrase && textLower === phrase) {
-          verifiedNumbers.add(authKey);
-          pendingAuth.delete(authKey);
+          accessControl.verifiedNumbers.add(authKey);
+          accessControl.pendingAuth.delete(authKey);
           await sock.sendMessage(jid, { text: "Verified. What do you need?" });
           console.log(`[SECURITY] ${authKey} verified via security phrase`);
           return;
         } else {
-          pendingAuth.delete(authKey);
+          accessControl.pendingAuth.delete(authKey);
           await sock.sendMessage(jid, { text: "That's not right. Access denied." });
           console.log(`[SECURITY] ${authKey} failed security phrase`);
           return;
@@ -2655,218 +1414,11 @@ async function handleMessage(msg) {
     }
   }
 
-  // ─── COMMANDS ───
+  // ─── COMMANDS (delegated to core/command-handler.js) ───
   if (body) {
-    const cmd = body.toLowerCase();
-
-    // Command access control
-    if (cmd.startsWith('/') && !canUseCommand(role, cmd.split(' ')[0])) {
-      await sock.sendMessage(jid, { text: 'That command is not available. Type /help to see what you can do.' });
-      return;
-    }
-
-    // Screen awareness toggle
-    if (cmd.includes('screen awareness on') || cmd.includes('turn on screen awareness') || cmd.includes('start watching my screen')) {
-      startScreenAwareness();
-      await sock.sendMessage(jid, { text: `*Screen Awareness is ON (Filmstrip Mode)*\nCapturing every 2 seconds, analyzing 3 frames at a time — I see what you're *doing*, not just what's on screen.\n\nAfter 1 minute I'll ask if you want me to keep going. Say *"screen awareness off"* or *"stop"* anytime to disable.` });
-      return;
-    }
-    if (cmd.includes('screen awareness off') || cmd.includes('turn off screen awareness') || cmd.includes('stop watching my screen') || (cmd === 'stop' && screenAwarenessActive)) {
-      stopScreenAwareness();
-      await sock.sendMessage(jid, { text: '*Screen Awareness is OFF*' });
-      return;
-    }
-    if ((cmd.includes('keep going') || cmd.includes('yes') || cmd.includes('continue')) && screenAwaitingContinue) {
-      await sock.sendMessage(jid, { text: '*Continuing screen monitoring.* Next check-in in 1 minute.' });
-      resumeScreenAwareness();
-      return;
-    }
-
-    if (cmd === '/clear') {
-      db.clearSession(jid);
-      await sock.sendMessage(jid, { text: 'Conversation cleared. Memories intact.' });
-      return;
-    }
-
-    if (cmd === '/status') {
-      const counts = db.getMemoryCount();
-      const { messages } = getHistory(jid);
-      const kDir = path.resolve(__dirname, config.knowledge.dir);
-      const kFiles = fs.existsSync(kDir) ? fs.readdirSync(kDir).filter(f => f.endsWith('.txt') || f.endsWith('.md')) : [];
-      const on = await isLaptopOnline();
-      const threads = db.getOpenThreads(jid);
-      const total = counts.facts + counts.decisions + counts.preferences + counts.tasks;
-      const uptime = process.uptime();
-      const hrs = Math.floor(uptime / 3600);
-      const mins = Math.floor((uptime % 3600) / 60);
-      const cronCount = db.getActiveCrons().length;
-      const topicCount = db.getTopics(jid).length;
-      const summaryCount = db.getCompactionSummaries(jid).length;
-      await sock.sendMessage(jid, { text:
-        `*${config.identity?.name || 'Favor'} — Status*\n` +
-        `Model: ${config.model.id}\n` +
-        `Uptime: ${hrs}h ${mins}m\n` +
-        `Messages: ${messages.length}\n` +
-        `Knowledge: ${kFiles.length} files\n` +
-        `Memories: ${total} (${counts.facts}F ${counts.decisions}D ${counts.preferences}P ${counts.tasks}T)\n` +
-        `Topics: ${topicCount} | Crons: ${cronCount} | Compactions: ${summaryCount} | Threads: ${threads.length}\n` +
-        `Laptop: ${on ? 'Connected' : 'Offline'}\n` +
-        `Screen Awareness: ${config.screenAwareness?.enabled ? 'ON' : 'OFF'}\n` +
-        `Features: vision, voice, topics, crons, compaction, alive\n` +
-        `Alive: ${alive ? 'ON' : 'OFF'}\n` +
-        `Engine: Favor (Baileys)`
-      });
-      return;
-    }
-
-    if (cmd === '/brain') {
-      const kDir = path.resolve(__dirname, config.knowledge.dir);
-      const kFiles = fs.existsSync(kDir) ? fs.readdirSync(kDir).filter(f => f.endsWith('.txt') || f.endsWith('.md')) : [];
-      await sock.sendMessage(jid, { text: kFiles.length ? '*Brain:*\n' + kFiles.map(f => '- ' + f).join('\n') : 'No knowledge files.' });
-      return;
-    }
-
-    if (cmd === '/laptop') {
-      const on = await isLaptopOnline();
-      await sock.sendMessage(jid, { text: on ? 'Laptop *online*.' : 'Laptop *offline*. Run tunnel script.' });
-      return;
-    }
-
-    if (cmd === '/memory') {
-      const mem = db.getAllMemories();
-      const lines = [];
-      if (mem.facts.length) lines.push(`*Facts (${mem.facts.length}):*\n` + mem.facts.slice(-10).map(f => '- ' + f.content).join('\n'));
-      if (mem.decisions.length) lines.push(`*Decisions (${mem.decisions.length}):*\n` + mem.decisions.slice(-10).map(d => '- ' + d.content).join('\n'));
-      if (mem.preferences.length) lines.push(`*Preferences (${mem.preferences.length}):*\n` + mem.preferences.slice(-10).map(p => '- ' + p.content).join('\n'));
-      if (mem.tasks.length) lines.push(`*Tasks (${mem.tasks.length}):*\n` + mem.tasks.slice(-10).map(t => `- [${t.status || '?'}] ${t.content}`).join('\n'));
-      await sock.sendMessage(jid, { text: lines.length ? lines.join('\n\n') : 'No memories yet.' });
-      return;
-    }
-
-    if (cmd.startsWith('/model')) {
-      const parts = body.split(/\s+/);
-      if (parts.length < 2) {
-        await sock.sendMessage(jid, { text: `*Current model:* ${config.model.id}\n\nUsage: /model <model-id>` });
-        return;
-      }
-      const newModel = parts[1];
-      config.model.id = newModel;
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-      db.audit('model.switch', `Switched to ${newModel}`);
-      await sock.sendMessage(jid, { text: `Model switched to *${newModel}*` });
-      return;
-    }
-
-    if (cmd === '/reload') {
-      const result = reloadConfig();
-      KNOWLEDGE = loadKnowledge();
-      await sock.sendMessage(jid, { text: result.error ? `Reload failed: ${result.error}` : `Config reloaded. Model: ${config.model.id}` });
-      return;
-    }
-
-    if (cmd === '/crons') {
-      const crons = db.getCrons(jid);
-      if (!crons.length) { await sock.sendMessage(jid, { text: 'No scheduled tasks.' }); return; }
-      const list = crons.map(c => `#${c.id} [${c.enabled ? 'ON' : 'OFF'}] *${c.label}*\n  ${c.schedule} | Next: ${c.next_run || 'N/A'}`).join('\n\n');
-      await sock.sendMessage(jid, { text: `*Scheduled Tasks:*\n\n${list}` });
-      return;
-    }
-
-    if (cmd === '/topics') {
-      const topics = db.getTopics(jid);
-      if (!topics.length) { await sock.sendMessage(jid, { text: 'No topics. All conversation is in the main thread.' }); return; }
-      const list = topics.map(t => `${t.active ? '→ ' : '  '}#${t.id} *${t.name}* (${t.updated_at})`).join('\n');
-      await sock.sendMessage(jid, { text: `*Topics:*\n\n${list}\n\nActive topic has → arrow.` });
-      return;
-    }
-
-    if (cmd === '/sync') {
-      const state = syncBot.loadState();
-      const drift = syncBot.detectDrift(state);
-      const events = syncBot.readRecentEvents(5);
-      const recentLines = events.map(e => `[${e.timestamp.slice(11,19)}] ${e.source_agent}: ${e.summary}`).join('\n');
-      const driftText = drift.length > 0 ? drift.map(d => `⚠ ${d.message}`).join('\n') : 'No drift detected';
-      await sock.sendMessage(jid, { text:
-        `*Memory Sync Status*\n\n` +
-        `*Objective:* ${state.current_objective || 'idle'}\n` +
-        `*Bot:* ${state.current_agents.bot.status} (${state.current_agents.bot.current_action || 'idle'})\n` +
-        `*Claude:* ${state.current_agents.claude.status} (${state.current_agents.claude.current_action || 'idle'})\n` +
-        `*Tasks:* ${(state.active_tasks || []).filter(t => t.status !== 'done').length} active\n` +
-        `*Blockers:* ${(state.open_blockers || []).length}\n` +
-        `*Last updated:* ${state.last_updated_at || 'never'} by ${state.last_updated_by || 'nobody'}\n\n` +
-        `*Recent Events:*\n${recentLines || 'None'}\n\n` +
-        `*Drift:* ${driftText}`
-      });
-      return;
-    }
-
-    if (cmd === '/recover') {
-      const recovery = syncBot.recover();
-      await sock.sendMessage(jid, { text:
-        `*State Recovery*\n\n` +
-        `*Mission:* ${recovery.mission || 'none'}\n` +
-        `*Unfinished tasks:* ${recovery.unfinished_tasks.length}\n` +
-        `*Last success:* ${recovery.last_successful_action || 'none'}\n` +
-        `*Last failure:* ${recovery.last_failed_action || 'none'}\n` +
-        `*Blockers:* ${(recovery.open_blockers || []).join(', ') || 'none'}\n` +
-        `*Next step:* ${recovery.recommended_next}\n\n` +
-        `*Recent events:*\n${recovery.recent_events_summary.slice(-5).join('\n') || 'none'}`
-      });
-      return;
-    }
-
-    if (cmd === '/update') {
-      await sock.sendMessage(jid, { text: 'Updating to latest version...' });
-      try {
-        const { execSync } = require('child_process');
-        const dir = __dirname;
-        // Stash local changes if any
-        const localChanges = execSync(`cd ${dir} && git status --porcelain 2>/dev/null | grep -v '??' || true`, { timeout: 10000 }).toString().trim();
-        let stashed = false;
-        if (localChanges) {
-          execSync(`cd ${dir} && git stash push -m "favor-update-$(date +%Y%m%d-%H%M%S)"`, { timeout: 10000 });
-          stashed = true;
-        }
-        // Pull updates
-        const pull = execSync(`cd ${dir} && git pull origin master 2>&1`, { timeout: 30000 }).toString().trim();
-        // Restore local changes
-        let customStatus = '';
-        if (stashed) {
-          try {
-            execSync(`cd ${dir} && git stash pop`, { timeout: 10000 });
-            customStatus = '\n\nYour custom code was preserved.';
-          } catch (e) {
-            customStatus = '\n\n⚠ Merge conflict with your custom code. Run ./update.sh on the server to fix.';
-            execSync(`cd ${dir} && git checkout . 2>/dev/null; git stash pop 2>/dev/null || true`, { timeout: 10000 });
-          }
-        }
-        execSync(`cd ${dir} && npm install --silent 2>&1`, { timeout: 60000 });
-        await sock.sendMessage(jid, { text: `*Update complete.*\n\n${pull}${customStatus}\n\nRestarting...` });
-        setTimeout(() => process.exit(0), 2000); // pm2 will restart
-      } catch (err) {
-        await sock.sendMessage(jid, { text: `Update failed: ${err.message}` });
-      }
-      return;
-    }
-
-    if (cmd === '/help') {
-      await sock.sendMessage(jid, { text:
-        `*${config.identity?.name || 'Favor'} — Commands*\n\n` +
-        `/status — System status\n` +
-        `/memory — View memories\n` +
-        `/brain — Knowledge files\n` +
-        `/laptop — Laptop status\n` +
-        `/model <id> — Switch model\n` +
-        `/crons — View scheduled tasks\n` +
-        `/topics — View conversation topics\n` +
-        `/sync — Memory sync status\n` +
-        `/recover — Recover shared state\n` +
-        `/reload — Reload config\n` +
-        `/update — Update to latest version\n` +
-        `/clear — Clear conversation\n` +
-        `/help — This message\n\n` +
-        `*Features:* vision, voice notes, topics, scheduled tasks, proactive outreach, smart compaction, memory sync, alive (check-ins + memory callbacks)`
-      });
+    const cmdResult = await commandHandler.handle(jid, body, role);
+    if (cmdResult.handled) {
+      if (cmdResult.knowledgeReloaded) KNOWLEDGE = cmdResult.knowledgeReloaded;
       return;
     }
   }
@@ -3077,9 +1629,9 @@ async function handleMessage(msg) {
       let imgPath = null;
       try {
         // Save image to temp file for Claude CLI to read
-        const imgExt = (lastReceivedImage?.mimetype || 'image/jpeg').split('/')[1]?.replace('webp', 'png') || 'jpg';
+        const imgExt = (mediaHandler.lastReceivedImage?.mimetype || 'image/jpeg').split('/')[1]?.replace('webp', 'png') || 'jpg';
         imgPath = `/tmp/favor_vision_${Date.now()}.${imgExt}`;
-        const imgBuffer = lastReceivedImage?.buffer;
+        const imgBuffer = mediaHandler.lastReceivedImage?.buffer;
         if (!imgBuffer) throw new Error('No image buffer available — download may have failed');
 
         fs.writeFileSync(imgPath, imgBuffer);
@@ -3369,7 +1921,12 @@ Run the Bash command NOW.`;
       // gpt-4o-mini for everything else (cheaper, faster, higher rate limits)
       const BROWSER_TOOLS = new Set(['browser_navigate', 'browser_click', 'browser_type', 'browser_select',
         'browser_fill_form', 'browser_get_fields', 'browser_get_clickables', 'browser_get_text',
-        'browser_scroll', 'browser_evaluate', 'browser_screenshot', 'browser_close', 'browser_status', 'browser_fill_from_vault']);
+        'browser_scroll', 'browser_evaluate', 'browser_screenshot', 'browser_close', 'browser_status',
+        'browser_fill_from_vault', 'browser_read_page', 'browser_crawl',
+        'playwright_navigate', 'playwright_snapshot', 'playwright_click', 'playwright_fill',
+        'playwright_type', 'playwright_press', 'playwright_select', 'playwright_hover',
+        'playwright_screenshot', 'playwright_evaluate', 'playwright_tabs',
+        'playwright_close', 'playwright_status']);
       let useFullModel = false; // escalate to gpt-4o if browser tools detected
       let toolLoops = 0;
       while (response.choices?.[0]?.finish_reason === 'tool_calls' && toolLoops < 10) {
@@ -3747,24 +2304,15 @@ if (config.service.heartbeatIntervalMs > 0) {
 
 // ─── MAP CLEANUP (prevent unbounded growth) ───
 setInterval(() => {
-  const now = Date.now();
-  // Cap LID maps to 5000 entries
-  if (lidToPhone.size > 5000) {
-    const keys = [...lidToPhone.keys()];
-    for (let i = 0; i < keys.length - 5000; i++) {
-      const phone = lidToPhone.get(keys[i]);
-      lidToPhone.delete(keys[i]);
-      if (phone) phoneToLid.delete(phone);
-    }
-  }
-  // Clean expired pendingAuth
-  if (pendingAuth.size > 100) pendingAuth.clear();
+  accessControl.cleanup();
 }, 3600000); // every hour
 
 // ─── GRACEFUL SHUTDOWN ───
 function shutdown(signal) {
   console.log(`[FAVOR] ${signal} received. Shutting down...`);
   db.audit('shutdown', signal);
+  reaper.killAll();
+  reaper.stop();
   cronEngine.stop();
   if (telegramAdapter) telegramAdapter.stop();
   else if (sock) sock.end();
@@ -3800,6 +2348,7 @@ const OPERATOR_JID = PLATFORM === 'telegram'
 
 // Log token on startup so tool-runner.js can use it
 console.log(`[NOTIFY] API token: ${NOTIFY_TOKEN} (set "notifyToken" in config.json to fix this)`);
+reaper.setNotifyToken(NOTIFY_TOKEN);
 
 const notifyServer = http.createServer((req, res) => {
   // Auth check for all POST endpoints
@@ -3964,6 +2513,9 @@ notifyServer.listen(NOTIFY_PORT, '127.0.0.1', () => {
 console.log(`[FAVOR] Starting ${config.identity?.name || 'Favor'} v${require('./package.json').version}...`);
 console.log(`[FAVOR] "${config.identity?.tagline || ''}"`);
 console.log(`[FAVOR] Features: vision | voice | topics | crons | compaction | proactive | alive`);
+
+// ─── PROCESS REAPER (kills stale Claude CLI processes) ───
+reaper.start();
 
 // Claude CLI availability check
 const { isAvailable: _claudeAvail } = require('./utils/claude');
