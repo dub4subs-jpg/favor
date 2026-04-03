@@ -4,14 +4,19 @@
 
 const { runCLI, isAvailable } = require('./utils/claude');
 
-function mergeViaAI(items) {
+function mergeViaAI(items, systemPrompt) {
   if (!isAvailable()) return Promise.reject(new Error('CLI not available'));
   const sources = items.map(it => `[${it.source}] ${it.text}`).join('\n---\n');
-  const prompt = `You are a WhatsApp AI companion about to message your operator. Multiple proactive modules fired at the same time and generated these separate messages:
+  const prompt = `${systemPrompt || ''}
+
+[SYSTEM: Merge these proactive messages into one natural message in YOUR voice.]
+
+Multiple of your proactive modules fired at the same time and generated these separate messages:
 
 ${sources}
 
 Merge these into ONE natural WhatsApp message. Rules:
+- Write in YOUR voice and personality — this should sound exactly like you, not a generic bot
 - Weave all the content together conversationally — don't use numbered lists or section headers
 - Keep the tone casual and natural, like one continuous thought
 - If some items overlap or repeat, deduplicate
@@ -27,6 +32,7 @@ class NotificationQueue {
     this.windowMs = opts.windowMs || 120000; // 2 minute batch window
     this.queues = new Map(); // contact -> { items: [], timer }
     this.sendFn = opts.sendFn || null; // async (contact, text) => {}
+    this.getSystemPrompt = opts.getSystemPrompt || null; // () => string (bot personality)
   }
 
   queue(contact, text, opts = {}) {
@@ -64,7 +70,8 @@ class NotificationQueue {
       // Multiple items — merge into one natural message via AI
       console.log(`[NOTIF] Merging ${items.length} messages for ${contact} (sources: ${items.map(i => i.source).join(', ')})`);
       try {
-        text = await mergeViaAI(items);
+        const sysPrompt = this.getSystemPrompt ? this.getSystemPrompt() : '';
+        text = await mergeViaAI(items, sysPrompt);
         if (!text || text.length < 10) {
           text = items.map(it => it.text).join('\n\n');
         }
