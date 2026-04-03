@@ -400,7 +400,7 @@ class FavorMemory {
   }
 
   getAllMemories() {
-    const categories = ['fact', 'decision', 'preference', 'task', 'workflow', 'idea', 'project_update'];
+    const categories = ['fact', 'decision', 'preference', 'task', 'workflow', 'idea', 'project_update', 'personality'];
     const result = {};
     for (const cat of categories) {
       result[cat + 's'] = this.getByCategory(cat);
