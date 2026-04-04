@@ -72,7 +72,13 @@ Rules:
 - Suggest a concrete next action.
 - Write it as a natural message, 2-4 sentences max.
 - If NOTHING is genuinely worth surfacing right now, respond with exactly: SKIP
-- Do NOT repeat insights already sent recently: ${this._recentInsights.slice(-5).join(', ') || 'none'}`;
+- Do NOT repeat insights already sent recently: ${this._recentInsights.slice(-5).join(', ') || 'none'}
+
+GROUNDING (critical):
+- ONLY report things that are EXPLICITLY stated in the data above. Never infer, combine, or synthesize across unrelated sources.
+- Do NOT invent external sources (LinkedIn, Twitter, Reddit, email, etc.) — you have NO access to those platforms.
+- Do NOT fabricate posts, questions, or events that aren't directly quoted in the data.
+- Every claim must trace to a SINGLE specific item above (a conversation, task, decision, or thread). If you can't point to the exact source, say SKIP.`;
 
     let reply = '';
     try {
