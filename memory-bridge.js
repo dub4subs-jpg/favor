@@ -94,41 +94,37 @@ function parseFrontmatter(text) {
 function splitIntoFacts(body, name) {
   const facts = [];
 
-  // Split on markdown headers, bullet points, or double newlines
-  const sections = body.split(/\n(?=##?\s|\n(?=[-*]\s))/);
+  // Split on H2/H3 headers — each header section stays as one block
+  const sections = body.split(/\n(?=##?\s)/);
 
   for (const section of sections) {
     const trimmed = section.trim();
     if (!trimmed || trimmed.length < 15) continue;
 
-    // If section has bullet points, each bullet is a fact
-    const bullets = trimmed.split('\n').filter(l => /^\s*[-*]\s+.{10,}/.test(l));
-    if (bullets.length > 1) {
-      // Include the header (if any) as context for each bullet
-      const headerMatch = trimmed.match(/^##?\s+(.+)/);
-      const header = headerMatch ? headerMatch[1].trim() : name;
-      for (const bullet of bullets) {
-        const content = bullet.replace(/^\s*[-*]\s+/, '').trim();
-        if (content.length >= 15 && content.length <= 500) {
-          facts.push(`[${header}] ${content}`);
-        }
-      }
-    } else if (trimmed.length <= 500) {
-      // Short section — keep as one fact
-      facts.push(trimmed.replace(/^##?\s+/, '').trim());
+    // Extract header for labeling
+    const headerMatch = trimmed.match(/^##?\s+(.+)/);
+    const header = headerMatch ? headerMatch[1].trim() : name;
+    const content = headerMatch ? trimmed.replace(/^##?\s+.+\n?/, '').trim() : trimmed;
+
+    if (!content || content.length < 15) continue;
+
+    if (content.length <= 1500) {
+      // Keep sections under 1500 chars as one block (preserves related bullets together)
+      const label = headerMatch ? `[${header}] ` : '';
+      facts.push(`${label}${content}`);
     } else {
-      // Long section — split on sentences, group into ~300 char chunks
-      const sentences = trimmed.replace(/^##?\s+.+\n/, '').split(/(?<=[.!?])\s+/);
+      // Only split very large sections — group into ~800 char chunks
+      const lines = content.split('\n');
       let chunk = '';
-      for (const s of sentences) {
-        if ((chunk + ' ' + s).length > 300 && chunk.length >= 50) {
-          facts.push(chunk.trim());
-          chunk = s;
+      for (const line of lines) {
+        if ((chunk + '\n' + line).length > 800 && chunk.length >= 100) {
+          facts.push(`[${header}] ${chunk.trim()}`);
+          chunk = line;
         } else {
-          chunk = chunk ? chunk + ' ' + s : s;
+          chunk = chunk ? chunk + '\n' + line : line;
         }
       }
-      if (chunk.trim().length >= 15) facts.push(chunk.trim());
+      if (chunk.trim().length >= 15) facts.push(`[${header}] ${chunk.trim()}`);
     }
   }
 
