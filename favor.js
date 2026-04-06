@@ -822,10 +822,10 @@ let executeTool = async function(name, input, context = {}) {
 const { buildSystemPrompt: _buildSystemPrompt } = require('./core/prompts');
 
 // Thin wrappers that inject instance dependencies into extracted module
-function buildMemoryPrompt(relevantMemories = []) {
+function buildMemoryPrompt(relevantMemories = [], contact = null) {
   // LEGACY — kept for any internal callers. New code should use core/prompts.js directly.
   const { buildMemoryPrompt: _bmp } = require('./core/prompts');
-  return _bmp(db, relevantMemories);
+  return _bmp(db, relevantMemories, contact);
 }
 function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
   return _buildSystemPrompt({

@@ -30,6 +30,7 @@ class SelfCheck {
     this._checkConfig();
     this._checkKnowledge();
     this._checkSecurity();
+    this._checkMemories();
 
     // Cleanup / sanitization
     this._cleanBrowserScreenshots(7);
@@ -280,6 +281,30 @@ class SelfCheck {
     }
     if (syntaxOk) {
       this._add('ok', 'security', 'Core files syntax OK');
+    }
+  }
+
+  _checkMemories() {
+    try {
+      const counts = this.db.db.prepare(
+        "SELECT category, COUNT(*) as cnt, SUM(CASE WHEN status = 'superseded' THEN 1 ELSE 0 END) as superseded, SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved, SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) as pinned FROM memories GROUP BY category"
+      ).all();
+      const total = counts.reduce((s, r) => s + r.cnt, 0);
+      const active = counts.reduce((s, r) => s + r.cnt - (r.superseded || 0) - (r.resolved || 0), 0);
+      const stale = total - active;
+      const pinned = counts.reduce((s, r) => s + (r.pinned || 0), 0);
+      const old30 = this.db.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE created_at < datetime('now', '-30 days') AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))").get().cnt;
+      const old60 = this.db.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE created_at < datetime('now', '-60 days') AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))").get().cnt;
+      const summary = `${active} active / ${stale} stale / ${pinned} pinned / ${old30} >30d / ${old60} >60d`;
+      if (stale > active * 0.5) {
+        this._add('warning', 'memory', `High stale ratio: ${summary}`);
+      } else {
+        this._add('ok', 'memory', summary);
+      }
+      const breakdown = counts.map(r => `${r.category}: ${r.cnt - (r.superseded || 0) - (r.resolved || 0)}`).join(', ');
+      this._add('ok', 'memory', `Categories: ${breakdown}`);
+    } catch (e) {
+      this._add('warning', 'memory', `Memory check failed: ${e.message}`);
     }
   }
 

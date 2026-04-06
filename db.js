@@ -198,6 +198,10 @@ class FavorMemory {
       },
     ];
 
+    // Add pinned and last_referenced columns if missing
+    try { this.db.exec("ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE memories ADD COLUMN last_referenced TEXT"); } catch (_) {}
+
     // Apply only new migrations
     for (let i = currentVersion; i < migrations.length; i++) {
       try {
@@ -216,6 +220,7 @@ class FavorMemory {
     if (category === 'decision' || category === 'fact' || category === 'project_update') {
       this._supersedeConflicts(content);
     }
+    this._supersedeByOverlap(category, content);
     const stmt = this.db.prepare('INSERT INTO memories (category, content, status, embedding, contact) VALUES (?, ?, ?, ?, ?)');
     stmt.run(category, content, status || null, embedding ? JSON.stringify(embedding) : null, contact || null);
     return this.db.prepare('SELECT last_insert_rowid() as id').get().id;
@@ -252,6 +257,25 @@ class FavorMemory {
         console.log(`[MEMORY] Superseded ${older.length} older memories about "${entity}"`);
       }
       break;
+    }
+  }
+
+  _supersedeByOverlap(category, content) {
+    if (!['fact', 'preference', 'personality'].includes(category)) return;
+    const words = new Set(content.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    if (words.size < 3) return;
+    const existing = this.db.prepare(
+      "SELECT id, content FROM memories WHERE category = ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) ORDER BY created_at DESC LIMIT 100"
+    ).all(category);
+    for (const row of existing) {
+      const rowWords = new Set(row.content.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+      if (rowWords.size < 3) continue;
+      const overlap = [...words].filter(w => rowWords.has(w)).length;
+      const ratio = overlap / Math.min(words.size, rowWords.size);
+      if (ratio > 0.55 && row.content !== content) {
+        this.db.prepare("UPDATE memories SET status = 'superseded' WHERE id = ?").run(row.id);
+        console.log(`[MEMORY] Auto-superseded #${row.id} (${(ratio * 100).toFixed(0)}% overlap with new ${category})`);
+      }
     }
   }
 
@@ -394,19 +418,54 @@ class FavorMemory {
     return result.changes;
   }
 
-  getByCategory(category, limit = 50) {
+  pin(id) {
+    this.db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(id);
+  }
+
+  unpin(id) {
+    this.db.prepare("UPDATE memories SET pinned = 0 WHERE id = ?").run(id);
+  }
+
+  touch(id) {
+    this.db.prepare("UPDATE memories SET last_referenced = datetime('now') WHERE id = ?").run(id);
+  }
+
+  touchMany(ids) {
+    if (!ids.length) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`UPDATE memories SET last_referenced = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
+  }
+
+  softForget(query) {
+    const matches = this.db.prepare(
+      "SELECT id FROM memories WHERE LOWER(content) LIKE ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))"
+    ).all(`%${query.toLowerCase()}%`);
+    if (!matches.length) return 0;
+    const ids = matches.map(r => r.id);
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`UPDATE memories SET status = 'superseded' WHERE id IN (${placeholders})`).run(...ids);
+    return ids.length;
+  }
+
+  getByCategory(category, limit = 50, contact = null) {
+    if (contact) {
+      const stmt = this.db.prepare(
+        "SELECT * FROM memories WHERE category = ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) AND (contact IS NULL OR contact = ?) ORDER BY created_at DESC LIMIT ?"
+      );
+      return stmt.all(category, contact, limit);
+    }
     const stmt = this.db.prepare(
       "SELECT * FROM memories WHERE category = ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) ORDER BY created_at DESC LIMIT ?"
     );
     return stmt.all(category, limit);
   }
 
-  getAllMemories() {
+  getAllMemories(contact = null) {
     const categories = ['fact', 'decision', 'preference', 'task', 'workflow', 'idea', 'project_update', 'personality'];
     const plurals = { personality: 'personalities', project_update: 'project_updates' };
     const result = {};
     for (const cat of categories) {
-      result[plurals[cat] || cat + 's'] = this.getByCategory(cat);
+      result[plurals[cat] || cat + 's'] = this.getByCategory(cat, 50, contact);
     }
     return result;
   }

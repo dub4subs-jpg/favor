@@ -3,8 +3,11 @@
 // the bot's identity, rules, and context for each message.
 
 function scoreMemoryByRecency(mem) {
-  // Decay: 1.0 for today, drops to 0 at 45 days. Core categories keep a 0.15 floor.
-  const ageMs = Date.now() - new Date(mem.created_at).getTime();
+  if (mem.pinned) return 1.0;
+  const created = new Date(mem.created_at).getTime();
+  const referenced = mem.last_referenced ? new Date(mem.last_referenced).getTime() : 0;
+  const effectiveTime = Math.max(created, referenced);
+  const ageMs = Date.now() - effectiveTime;
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   const coreCats = ['preference', 'personality', 'decision'];
   const floor = coreCats.includes(mem.category) ? 0.15 : 0;
@@ -24,8 +27,8 @@ function rankMemories(memories, limit) {
  * @param {Array} relevantMemories - Semantically relevant memories for the current message
  * @returns {string}
  */
-function buildMemoryPrompt(db, relevantMemories = []) {
-  const mem = db.getAllMemories();
+function buildMemoryPrompt(db, relevantMemories = [], contact = null) {
+  const mem = db.getAllMemories(contact);
   const parts = [];
 
   const facts = rankMemories(mem.facts, 25);
@@ -59,6 +62,15 @@ function buildMemoryPrompt(db, relevantMemories = []) {
         `- [${r.category}] ${r.content} (relevance: ${(r.score * 100).toFixed(0)}%)`
       ).join('\n'));
     }
+  }
+
+  // Reinforce: touch all memories that made it into the prompt
+  const allUsedIds = [];
+  for (const cat of [facts, decisions, preferences, workflows, ideas, projectUpdates, personalities]) {
+    for (const m of cat) if (m.id) allUsedIds.push(m.id);
+  }
+  if (allUsedIds.length) {
+    try { db.touchMany(allUsedIds); } catch (_) {}
   }
 
   return parts.length ? '\n\n=== LONG-TERM MEMORY ===\n' + parts.join('\n\n') : '';
@@ -172,7 +184,7 @@ Then start executing step 1. Each subsequent tool call should reference which pl
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
 
 MEMORY SYNC: You have sync_update and sync_recover tools. Use sync_update to log important actions, decisions, task completions, and file changes so Claude Code stays in sync with your state. Use sync_recover after any restart to rebuild context from shared state.
-Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories) + buildThreadPrompt(db, contact) + `
+Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories, contact) + buildThreadPrompt(db, contact) + `
 
 === REMINDER ===
 You MUST follow all rules in your knowledge base above — especially your identity, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;
