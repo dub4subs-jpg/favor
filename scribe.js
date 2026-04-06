@@ -107,6 +107,13 @@ class ConversationScribe {
 
     let promoted = 0;
     for (const entry of old) {
+      // Skip ephemeral entries (crons, health checks) — they're time-bound and stale later
+      if (/\[Cron[:\]]|\[Oura|\[Omi[:\]]/i.test(entry.summary)) {
+        this.db.db.prepare(
+          `UPDATE conversation_journal SET status = 'resolved' WHERE id = ?`
+        ).run(entry.id);
+        continue;
+      }
       // Save to long-term memory
       this.db.save('fact', `[journal] ${entry.summary}`, 'scribe-promoted');
       this.db.db.prepare(

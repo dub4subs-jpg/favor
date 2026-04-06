@@ -395,7 +395,9 @@ class FavorMemory {
   }
 
   getByCategory(category, limit = 50) {
-    const stmt = this.db.prepare("SELECT * FROM memories WHERE category = ? ORDER BY created_at DESC LIMIT ?");
+    const stmt = this.db.prepare(
+      "SELECT * FROM memories WHERE category = ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) ORDER BY created_at DESC LIMIT ?"
+    );
     return stmt.all(category, limit);
   }
 

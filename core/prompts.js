@@ -3,9 +3,12 @@
 // the bot's identity, rules, and context for each message.
 
 function scoreMemoryByRecency(mem) {
+  // Decay: 1.0 for today, drops to 0 at 45 days. Core categories keep a 0.15 floor.
   const ageMs = Date.now() - new Date(mem.created_at).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  return Math.max(0.3, 1.0 - (ageDays / 90) * 0.7);
+  const coreCats = ['preference', 'personality', 'decision'];
+  const floor = coreCats.includes(mem.category) ? 0.15 : 0;
+  return Math.max(floor, 1.0 - ageDays / 45);
 }
 
 function rankMemories(memories, limit) {
