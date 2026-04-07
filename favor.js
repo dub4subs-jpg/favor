@@ -1703,10 +1703,10 @@ async function handleMessage(msg) {
     const routerStart = Date.now();
 
     // ─── DECISION ROUTER ───
-    const recentContext = history.slice(-3).map(m => typeof m.content === 'string' ? m.content : '').join(' ');
+    const recentContext = history.slice(-3).map(m => typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '').join(' ');
     const userText = typeof history[history.length - 1]?.content === 'string'
       ? history[history.length - 1].content
-      : body || '';
+      : (Array.isArray(history[history.length - 1]?.content) ? history[history.length - 1].content.map(c => c.text || '').join(' ') : body || '');
     const decision = await classify(openai, userText, recentContext);
 
     // Sync: message received, routed
@@ -1758,7 +1758,7 @@ async function handleMessage(msg) {
         const recentHistory = history.slice(-10).map(m => {
           if (m.role === 'tool') return null;
           if (m.tool_calls) return null;
-          const content = typeof m.content === 'string' ? m.content : '';
+          const content = typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '';
           if (!content) return null;
           return `${m.role === 'user' ? 'Human' : 'Assistant'}: ${content}`;
         }).filter(Boolean).join('\n\n');
@@ -1809,7 +1809,7 @@ Be concise. Return your analysis/solution directly.`;
         const recentHistory = history.slice(-10).map(m => {
           if (m.role === 'tool') return null; // skip tool results
           if (m.tool_calls) return null; // skip tool call messages
-          const content = typeof m.content === 'string' ? m.content : '';
+          const content = typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '';
           if (!content) return null;
           return `${m.role === 'user' ? 'Human' : 'Assistant'}: ${content}`;
         }).filter(Boolean).join('\n\n');
@@ -1908,7 +1908,7 @@ Produce a well-structured, professional output. Use markdown formatting with hea
         const recentHistoryMini = history.slice(-10).map(m => {
           if (m.role === 'tool') return null;
           if (m.tool_calls) return null;
-          const content = typeof m.content === 'string' ? m.content : '';
+          const content = typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '';
           if (!content) return null;
           return `${m.role === 'user' ? 'Human' : 'Assistant'}: ${content}`;
         }).filter(Boolean).join('\n\n');

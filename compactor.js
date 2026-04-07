@@ -139,8 +139,16 @@ ${transcript.substring(0, 8000)}`;
 
       const factPrompt = `Extract concrete, reusable knowledge from this conversation before it gets summarized. Return JSON with categorized items:
 {"facts": ["specific name/date/price/detail"], "decisions": ["what was decided and why"], "promises": ["commitments made to someone"]}
+
+CRITICAL: Summarize what HAPPENED and what the RESULT was, not what was asked for. If a task was completed, say it was completed. If it failed, say it failed. If it's still pending, say it's pending with the reason.
+- BAD: "Invoice 102: Generate and send to jerry@example.com"
+- GOOD: "Invoice 102: Sent successfully to jerry@example.com on March 31"
+- BAD: "Look up flight prices to destination"
+- GOOD: "Flight prices checked — cheapest was $342 on Copa Airlines for April 15"
+
 Rules:
 - Include: names, dates, prices, decisions, preferences, contact info, deadlines, commitments
+- Always record the OUTCOME — was it done, sent, failed, or still pending?
 - Skip: greetings, small talk, tool call details, generic statements
 - Each item max 200 chars, max 5 items per category
 - Return {"facts":[],"decisions":[],"promises":[]} if nothing worth saving
