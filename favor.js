@@ -288,6 +288,7 @@ if (config.alive?.enabled !== false) {
     morningHourUTC: toUTC(morningLocal),
     eveningHourUTC: toUTC(eveningLocal),
     callbackIntervalHours: aliveConfig.memoryCallbackHours ?? 8,
+    timezone: aliveConfig.timezone || 'America/New_York',
     buildSystemPrompt: (contact) => buildSystemPrompt(contact),
   });
   console.log('[ALIVE] Proactive personality engine loaded');
@@ -1781,7 +1782,8 @@ The operator just sent an image. Read the image file at: ${imgPath}
 Their message: ${body || 'What do you see in this image?'}
 
 Analyze the image and respond naturally. Respond as ${config.identity?.name || 'Favor'}.`;
-        const cliResult = await runClaudeCLI(cliPrompt, 90000, { imagePath: imgPath });
+        const visionTimeouts = getCliTimeouts('vision') || [90000];
+        const cliResult = await runClaudeCLI(cliPrompt, visionTimeouts[0], { imagePath: imgPath });
         reply = cliResult;
         modelUsed = 'claude-cli-vision';
         history.push({ role: 'assistant', content: reply });
@@ -1836,7 +1838,8 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 ${recentHistory}
 
 Respond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
-        const cliResult = await runClaudeCLI(cliPrompt, 180000, { allowTools: true });
+        const chatTimeouts = getCliTimeouts('chat') || [90000, 120000];
+        const cliResult = await runClaudeCLI(cliPrompt, chatTimeouts[0], { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
         history.push({ role: 'assistant', content: reply });
@@ -1845,8 +1848,9 @@ Respond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
         // Retry with reduced prompt (no tools, trimmed history)
         const reducedHistory = recentHistory.split('\n\n').slice(-10).join('\n\n');
         const reducedPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\n${reducedHistory}\n\nRespond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
+        const retryTimeout = chatTimeouts[1] || chatTimeouts[0];
         try {
-          const cliResult = await runClaudeCLI(reducedPrompt, 180000);
+          const cliResult = await runClaudeCLI(reducedPrompt, retryTimeout);
           reply = cliResult;
           modelUsed = 'claude-cli';
           history.push({ role: 'assistant', content: reply });
@@ -1878,7 +1882,7 @@ Respond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
             // All backends exhausted — minimal Claude attempt
             try {
               const finalPrompt = `Reply to this message:\n\n${userText}`;
-              const cliResult = await runClaudeCLI(finalPrompt, 180000);
+              const cliResult = await runClaudeCLI(finalPrompt, retryTimeout);
               reply = cliResult;
               modelUsed = 'claude-cli';
               history.push({ role: 'assistant', content: reply });
@@ -1958,7 +1962,8 @@ When you need to message someone, USE these tools. Do NOT say you can't send mes
 ${recentHistoryMini}
 
 Respond briefly and directly. Respond as ${config.identity?.name || 'Favor'}.`;
-        const cliResult = await runClaudeCLI(cliPrompt, 30000, { allowTools: true });
+        const miniTimeouts = getCliTimeouts('mini') || [30000, 30000];
+        const cliResult = await runClaudeCLI(cliPrompt, miniTimeouts[0], { allowTools: true });
         reply = cliResult;
         modelUsed = 'claude-cli';
         history.push({ role: 'assistant', content: reply });
@@ -2055,7 +2060,8 @@ For SCREENSHOTS: phone_screenshot and laptop_screenshot produce a file path. Aft
 curl -s -X POST http://localhost:3099/send-image -H 'Content-Type: application/json' -d '{"to":"${operatorNum}","image_path":"THE_PATH_FROM_TOOL","caption":"Screenshot"}'
 
 Run the Bash command NOW.`;
-        const cliResult = await runClaudeCLI(toolPrompt, 45000, { allowTools: true, model: 'haiku' });
+        const toolTimeouts = getCliTimeouts('tool') || [45000];
+        const cliResult = await runClaudeCLI(toolPrompt, toolTimeouts[0], { allowTools: true, model: 'haiku' });
         if (cliResult && cliResult.trim()) {
           // If tool already sent an image/result via /trigger, don't repeat
           const lower = cliResult.toLowerCase();

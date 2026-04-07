@@ -285,8 +285,9 @@ function getCliTimeouts(route) {
 }
 
 // ─── CLAUDE CLI EXECUTOR (with priority queue, concurrency limit, circuit breaker + partial output recovery) ───
-const CLI_MAX_CONCURRENT = _cliConfig.maxConcurrent || 3;
-const CLI_DEFAULT_MODEL = _cliConfig.model || null; // e.g. 'sonnet' — applied when no model is explicitly passed
+// These read from _cliConfig dynamically so hot-reload takes effect
+function _getMaxConcurrent() { return _cliConfig.maxConcurrent || 3; }
+function _getDefaultModel() { return _cliConfig.model || null; } // e.g. 'sonnet'
 let _cliRunning = 0;
 const _cliQueue = []; // { priority, run, id } — lower number = higher priority
 
@@ -326,7 +327,7 @@ function _cliCircuitRecordFailure(err) {
 }
 
 function _drainQueue() {
-  while (_cliQueue.length > 0 && _cliRunning < CLI_MAX_CONCURRENT) {
+  while (_cliQueue.length > 0 && _cliRunning < _getMaxConcurrent()) {
     // Pick highest priority (lowest number) item
     let bestIdx = 0;
     for (let i = 1; i < _cliQueue.length; i++) {
@@ -353,7 +354,7 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model,
     const run = () => {
       _cliRunning++;
       const args = ['--print', '--bare'];
-      const effectiveModel = model || CLI_DEFAULT_MODEL;
+      const effectiveModel = model || _getDefaultModel();
       if (effectiveModel) args.push('--model', effectiveModel);
       if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');
       args.push('-');
@@ -414,7 +415,7 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model,
       proc.stdin.end();
     };
 
-    if (_cliRunning >= CLI_MAX_CONCURRENT) {
+    if (_cliRunning >= _getMaxConcurrent()) {
       // Cap queue size to prevent unbounded growth
       const CLI_MAX_QUEUE = 10;
       if (_cliQueue.length >= CLI_MAX_QUEUE) {
