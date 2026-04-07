@@ -196,6 +196,59 @@ class FavorMemory {
           )
         `);
       },
+      // v8: Session audit trail (append-only event log, survives compaction)
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS session_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            role TEXT,
+            content TEXT,
+            model_used TEXT,
+            tokens_est INTEGER,
+            metadata TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_sevt_contact ON session_events(contact, created_at);
+          CREATE INDEX IF NOT EXISTS idx_sevt_type ON session_events(event_type, created_at);
+        `);
+      },
+      // v9: Reply queue (structured inbox for deferred messages)
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS reply_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source TEXT DEFAULT 'whatsapp',
+            priority INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            processed_at TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_rq_status ON reply_queue(status, priority DESC, created_at);
+        `);
+      },
+      // v10: Session metrics (per-interaction cost/token tracking)
+      () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS session_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT NOT NULL,
+            route TEXT,
+            model_used TEXT,
+            tokens_in_est INTEGER DEFAULT 0,
+            tokens_out_est INTEGER DEFAULT 0,
+            tool_calls INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            compacted INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_smet_contact ON session_metrics(contact, created_at);
+          CREATE INDEX IF NOT EXISTS idx_smet_model ON session_metrics(model_used, created_at);
+        `);
+      },
     ];
 
     // Add pinned and last_referenced columns if missing
@@ -212,6 +265,148 @@ class FavorMemory {
         break; // Stop on failure — don't skip migrations
       }
     }
+  }
+
+  // ─── SESSION AUDIT TRAIL ───
+  logEvent(contact, eventType, content, opts = {}) {
+    const stmt = this.db.prepare(`
+      INSERT INTO session_events (contact, event_type, role, content, model_used, tokens_est, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
+    const truncated = contentStr.length > 10240 ? contentStr.substring(0, 10240) + '...[truncated]' : contentStr;
+    stmt.run(
+      contact, eventType,
+      opts.role || null, truncated,
+      opts.model || null, opts.tokensEst || null,
+      opts.metadata ? JSON.stringify(opts.metadata) : null
+    );
+  }
+
+  logEvents(events) {
+    const stmt = this.db.prepare(`
+      INSERT INTO session_events (contact, event_type, role, content, model_used, tokens_est, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const txn = this.db.transaction((evts) => {
+      for (const e of evts) {
+        const contentStr = typeof e.content === 'string' ? e.content : JSON.stringify(e.content);
+        const truncated = contentStr.length > 10240 ? contentStr.substring(0, 10240) + '...[truncated]' : contentStr;
+        stmt.run(
+          e.contact, e.eventType,
+          e.role || null, truncated,
+          e.model || null, e.tokensEst || null,
+          e.metadata ? JSON.stringify(e.metadata) : null
+        );
+      }
+    });
+    txn(events);
+  }
+
+  getEvents(contact, limit = 50, offset = 0) {
+    return this.db.prepare(
+      'SELECT * FROM session_events WHERE contact = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'
+    ).all(contact, limit, offset);
+  }
+
+  getEventsByType(contact, eventType, limit = 20) {
+    return this.db.prepare(
+      'SELECT * FROM session_events WHERE contact = ? AND event_type = ? ORDER BY created_at DESC, id DESC LIMIT ?'
+    ).all(contact, eventType, limit);
+  }
+
+  searchEvents(contact, query, limit = 20) {
+    return this.db.prepare(
+      'SELECT * FROM session_events WHERE contact = ? AND content LIKE ? ORDER BY created_at DESC, id DESC LIMIT ?'
+    ).all(contact, `%${query}%`, limit);
+  }
+
+  getEventCount(contact) {
+    return this.db.prepare('SELECT COUNT(*) as count FROM session_events WHERE contact = ?').get(contact)?.count || 0;
+  }
+
+  pruneEvents(daysToKeep = 90) {
+    return this.db.prepare(
+      "DELETE FROM session_events WHERE created_at < datetime('now', ?)"
+    ).run(`-${daysToKeep} days`).changes;
+  }
+
+  // ─── REPLY QUEUE ───
+  queueReply(contact, message, source = 'whatsapp', priority = 0) {
+    this.db.prepare(
+      'INSERT INTO reply_queue (contact, message, source, priority) VALUES (?, ?, ?, ?)'
+    ).run(contact, message, source, priority);
+  }
+
+  getPendingReplies(limit = 20) {
+    return this.db.prepare(
+      "SELECT * FROM reply_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC LIMIT ?"
+    ).all(limit);
+  }
+
+  markReplyProcessed(id) {
+    this.db.prepare(
+      "UPDATE reply_queue SET status = 'processed', processed_at = datetime('now') WHERE id = ?"
+    ).run(id);
+  }
+
+  markReplyFailed(id) {
+    this.db.prepare(
+      "UPDATE reply_queue SET status = 'failed', processed_at = datetime('now') WHERE id = ?"
+    ).run(id);
+  }
+
+  pruneProcessedReplies(daysToKeep = 7) {
+    return this.db.prepare(
+      "DELETE FROM reply_queue WHERE status IN ('processed', 'failed') AND processed_at < datetime('now', ?)"
+    ).run(`-${daysToKeep} days`).changes;
+  }
+
+  // ─── SESSION METRICS ───
+  logSessionMetric(contact, opts = {}) {
+    this.db.prepare(`
+      INSERT INTO session_metrics (contact, route, model_used, tokens_in_est, tokens_out_est, tool_calls, duration_ms, compacted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      contact,
+      opts.route || null, opts.model || null,
+      opts.tokensIn || 0, opts.tokensOut || 0,
+      opts.toolCalls || 0, opts.durationMs || 0,
+      opts.compacted ? 1 : 0
+    );
+  }
+
+  getSessionMetrics(contact, days = 7) {
+    return this.db.prepare(
+      "SELECT * FROM session_metrics WHERE contact = ? AND created_at > datetime('now', ?) ORDER BY created_at DESC"
+    ).all(contact, `-${days} days`);
+  }
+
+  getMetricsSummary(days = 7) {
+    return this.db.prepare(`
+      SELECT model_used, COUNT(*) as interactions,
+        SUM(tokens_in_est) as total_tokens_in, SUM(tokens_out_est) as total_tokens_out,
+        SUM(tool_calls) as total_tool_calls, AVG(duration_ms) as avg_duration_ms,
+        SUM(compacted) as compactions
+      FROM session_metrics WHERE created_at > datetime('now', ?)
+      GROUP BY model_used ORDER BY interactions DESC
+    `).all(`-${days} days`);
+  }
+
+  getContactMetrics(days = 7) {
+    return this.db.prepare(`
+      SELECT contact, COUNT(*) as interactions,
+        SUM(tokens_in_est + tokens_out_est) as total_tokens,
+        SUM(tool_calls) as total_tool_calls, AVG(duration_ms) as avg_duration_ms
+      FROM session_metrics WHERE created_at > datetime('now', ?)
+      GROUP BY contact ORDER BY total_tokens DESC
+    `).all(`-${days} days`);
+  }
+
+  pruneSessionMetrics(daysToKeep = 30) {
+    return this.db.prepare(
+      "DELETE FROM session_metrics WHERE created_at < datetime('now', ?)"
+    ).run(`-${daysToKeep} days`).changes;
   }
 
   // ─── MEMORY ───

@@ -15,11 +15,25 @@ class Compactor {
     this.threshold = opts.threshold || 30;
     this.keepRecent = opts.keepRecent || 12;
     this.summaryTokens = opts.summaryTokens || 512;
+    // Token budget: compact when estimated tokens exceed this (default ~25k tokens)
+    this.tokenBudget = opts.tokenBudget || 25000;
+  }
+
+  // Estimate token count from messages (~4 chars per token)
+  _estimateTokens(messages) {
+    let chars = 0;
+    for (const m of messages) {
+      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+      chars += c.length;
+    }
+    return Math.ceil(chars / 4);
   }
 
   // Check if a conversation needs compaction and do it
   async compactIfNeeded(contact, messages) {
-    if (messages.length <= this.threshold) return { compacted: false, messages };
+    const estimatedTokens = this._estimateTokens(messages);
+    const needsCompaction = messages.length > this.threshold || estimatedTokens > this.tokenBudget;
+    if (!needsCompaction) return { compacted: false, messages };
 
     // Find a safe split point that doesn't break tool_use/tool_result pairs
     let splitAt = messages.length - this.keepRecent;
@@ -52,6 +66,22 @@ class Compactor {
       await this._extractFacts(toCompact, contact);
       this.db.saveCompactionSummary(contact, summary, toCompact.length);
       this.db.audit('compaction', `contact=${contact.substring(0, 15)} msgs=${toCompact.length}`);
+
+      // Audit trail: log compaction event + preserve compacted messages
+      try {
+        this.db.logEvent(contact, 'compaction', summary, {
+          metadata: {
+            messagesCompacted: toCompact.length,
+            messagesKept: toKeep.length,
+            tokensBeforeEst: this._estimateTokens(messages),
+            tokensAfterEst: this._estimateTokens([...toKeep])
+          }
+        });
+        for (const msg of toCompact) {
+          const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+          this.db.logEvent(contact, 'compacted_message', content, { role: msg.role });
+        }
+      } catch (_) {}
 
       const summaryMessage = {
         role: 'user',

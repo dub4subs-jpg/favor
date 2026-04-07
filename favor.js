@@ -977,6 +977,8 @@ function getHistory(contact) {
 async function saveHistory(contact, messages, topicId) {
   const result = await compactor.compactIfNeeded(contact, messages);
   const finalMessages = result.messages;
+  // Flag on the messages array so callers can check compaction state
+  messages._wasCompacted = result.compacted;
   if (topicId) {
     db.saveTopicMessages(topicId, finalMessages);
   } else {
@@ -1644,6 +1646,13 @@ async function handleMessage(msg) {
       history.push({ role: 'user', content: userContent });
     }
 
+    // ─── AUDIT TRAIL: log inbound user message ───
+    try {
+      const userText4Log = (userContent.length === 1 && userContent[0].type === 'text')
+        ? userContent[0].text : JSON.stringify(userContent);
+      db.logEvent(jid, 'user_message', userText4Log, { role: 'user', metadata: { hasMedia: userContent.some(c => c.type === 'image') } });
+    } catch (e) { console.warn('[AUDIT] User event log failed:', e.message); }
+
     // Send typing indicator
     if (typeof sock.presenceSubscribe === 'function') await sock.presenceSubscribe(jid);
     await sock.sendPresenceUpdate('composing', jid);
@@ -2111,7 +2120,39 @@ Run the Bash command NOW.`;
     });
 
     reply = reply || 'Done.';
+
+    // ─── AUDIT TRAIL: log assistant response ───
+    try {
+      db.logEvent(jid, 'assistant_message', reply, {
+        role: 'assistant',
+        model: modelUsed,
+        tokensEst: Math.ceil((reply || '').length / 4),
+        metadata: { route: decision.route, toolsUsed }
+      });
+    } catch (e) { console.warn('[AUDIT] Event log failed:', e.message); }
+
+    // Token estimation for metrics (~4 chars per token)
+    const _tokensIn = Math.ceil(history.map(m => {
+      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+      return c.length;
+    }).reduce((a, b) => a + b, 0) / 4);
+    const _tokensOut = Math.ceil((reply || '').length / 4);
+    const _durationMs = Date.now() - routerStart;
+
     await saveHistory(jid, history, topicId);
+
+    // ─── SESSION METRICS: log after saveHistory so compaction state is known ───
+    try {
+      db.logSessionMetric(jid, {
+        route: decision.route,
+        model: modelUsed,
+        tokensIn: _tokensIn,
+        tokensOut: _tokensOut,
+        toolCalls: toolsUsed.length,
+        durationMs: _durationMs,
+        compacted: history._wasCompacted || false
+      });
+    } catch (e) { console.warn('[AUDIT] Metrics log failed:', e.message); }
 
     await sock.sendPresenceUpdate('paused', jid);
 
