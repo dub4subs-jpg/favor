@@ -56,6 +56,15 @@ class Callbacks {
       return;
     }
 
+    // Check if a newer memory contradicts this one (completed/resolved/done)
+    if (this._hasNewerResolution(candidate)) {
+      console.log(`[ALIVE] Memory #${candidate.id} has a newer resolution — auto-resolving & skipping`);
+      this.engine.db.db.prepare(
+        `UPDATE memories SET status = 'resolved', updated_at = datetime('now') WHERE id = ?`
+      ).run(candidate.id);
+      return;
+    }
+
     const systemPrompt = this.engine.getSystemPrompt();
 
     // Fetch Oura readiness to modulate callback urgency
@@ -156,6 +165,29 @@ ONLY message if this is a genuinely forgotten task, an open decision that needs 
     }
 
     return null;
+  }
+
+  // Check if a newer memory says this task/topic was completed, resolved, or done
+  _hasNewerResolution(memory) {
+    const words = memory.content
+      .replace(/\[.*?\]/g, '')
+      .split(/[\s—:,]+/)
+      .filter(w => w.length > 3)
+      .slice(0, 4);
+    if (words.length < 2) return false;
+
+    const pattern = `%${words.slice(0, 2).join('%')}%`;
+    const newer = this.engine.db.db.prepare(
+      `SELECT id, content, status FROM memories
+       WHERE content LIKE ? AND id != ? AND created_at > ?
+       ORDER BY created_at DESC LIMIT 10`
+    ).all(pattern, memory.id, memory.created_at);
+
+    const DONE_WORDS = /\b(completed|sent|done|resolved|finished|closed|delivered|shipped|confirmed)\b/i;
+    const DONE_STATUS = new Set(['resolved', 'completed', 'done', 'superseded']);
+    return newer.some(m =>
+      DONE_STATUS.has((m.status || '').toLowerCase()) || DONE_WORDS.test(m.content)
+    );
   }
 
   _ageDays(dateStr) {
