@@ -289,7 +289,7 @@ class FavorMemory {
   }
 
   getContactMemories(contact, limit = 10) {
-    return this.db.prepare("SELECT * FROM memories WHERE contact = ? ORDER BY created_at DESC LIMIT ?")
+    return this.db.prepare("SELECT * FROM memories WHERE contact = ? AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) ORDER BY created_at DESC LIMIT ?")
       .all(contact, limit);
   }
 
@@ -298,7 +298,7 @@ class FavorMemory {
     if (!terms.length) return this.getContactMemories(contact, limit);
     const conditions = terms.map(() => "LOWER(content) LIKE ?").join(' OR ');
     const params = terms.map(t => `%${t}%`);
-    return this.db.prepare(`SELECT * FROM memories WHERE contact = ? AND (${conditions}) ORDER BY created_at DESC LIMIT ?`)
+    return this.db.prepare(`SELECT * FROM memories WHERE contact = ? AND (${conditions}) AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) ORDER BY created_at DESC LIMIT ?`)
       .all(contact, ...params, limit);
   }
 
@@ -369,13 +369,17 @@ class FavorMemory {
       // Recency: memories from last 24h get 2x boost, last week 1.5x, older 1x
       const ageMs = now - new Date(row.created_at).getTime();
       const recencyBoost = ageMs < 86400000 ? 2.0 : ageMs < 604800000 ? 1.5 : 1.0;
-      return { ...row, score: termScore * recencyBoost };
+      const pinnedBoost = row.pinned ? 1.5 : 1.0;
+      return { ...row, score: termScore * recencyBoost * pinnedBoost };
     });
     return scored.sort((a, b) => b.score - a.score).slice(0, 20);
   }
 
-  searchSemantic(queryEmbedding, topK = 8) {
-    const rows = this.db.prepare("SELECT id, category, content, status, created_at, embedding FROM memories WHERE embedding IS NOT NULL AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))").all();
+  searchSemantic(queryEmbedding, topK = 8, contact = null) {
+    const sql = contact
+      ? "SELECT id, category, content, status, created_at, embedding, pinned, last_referenced, contact FROM memories WHERE embedding IS NOT NULL AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) AND (contact IS NULL OR contact = ?)"
+      : "SELECT id, category, content, status, created_at, embedding, pinned, last_referenced, contact FROM memories WHERE embedding IS NOT NULL AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))";
+    const rows = contact ? this.db.prepare(sql).all(contact) : this.db.prepare(sql).all();
     if (!rows.length) return [];
     const now = Date.now();
     const scored = rows.map(row => {
@@ -387,11 +391,24 @@ class FavorMemory {
         normB += emb[i] * emb[i];
       }
       const cosine = dot / (Math.sqrt(normA) * Math.sqrt(normB));
-      // Recency decay: blend cosine similarity (80%) with recency (20%)
+      // Recency decay (half-life ~62 days)
       const ageMs = now - new Date(row.created_at).getTime();
       const ageDays = ageMs / 86400000;
-      const recency = Math.exp(-ageDays / 90); // half-life ~62 days
-      return { ...row, score: cosine * 0.8 + recency * 0.2 };
+      const recency = Math.exp(-ageDays / 90);
+      // Reinforcement: how recently this memory was referenced
+      let reinforcement = 0.1;
+      if (row.last_referenced) {
+        const refAgeMs = now - new Date(row.last_referenced).getTime();
+        if (refAgeMs < 86400000) reinforcement = 1.0;        // last 24h
+        else if (refAgeMs < 604800000) reinforcement = 0.7;  // last week
+        else if (refAgeMs < 2592000000) reinforcement = 0.4; // last month
+      }
+      // Pinned memories always get full pin weight
+      const pinned = row.pinned ? 1.0 : 0.0;
+      // Cosine floor: don't let bonuses push unrelated memories into results
+      if (cosine < 0.2) return { ...row, score: cosine };
+      // Weighted multi-factor score
+      return { ...row, score: cosine * 0.50 + recency * 0.20 + reinforcement * 0.15 + pinned * 0.15 };
     });
     return scored.sort((a, b) => b.score - a.score).slice(0, topK);
   }

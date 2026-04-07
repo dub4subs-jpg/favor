@@ -102,11 +102,15 @@ function createToolExecutor(deps) {
           db.db.prepare('UPDATE memories SET content = ?, status = ?, updated_at = datetime(\'now\') WHERE id = ?')
             .run(input.content, input.status || null, target.id);
           getEmbedding(input.content).then(emb => db.updateEmbedding(target.id, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${target.id}:`, e.message));
+          // Invalidate recall cache so new memory is immediately findable
+          if (typeof global._favorQueryCacheClear === 'function') global._favorQueryCacheClear();
           return `Updated existing memory (was similar): ${input.content}`;
         }
         const memId = db.save(input.category, input.content, input.status);
         console.log(`[MEMORY] ${input.category}: ${input.content}`);
         getEmbedding(input.content).then(emb => db.updateEmbedding(memId, emb)).catch(e => console.warn(`[EMBED] Failed for memory #${memId}:`, e.message));
+        // Invalidate recall cache so new memory is immediately findable
+        if (typeof global._favorQueryCacheClear === 'function') global._favorQueryCacheClear();
         return 'Remembered: ' + input.content;
       }
       case 'memory_search': {
@@ -115,8 +119,12 @@ function createToolExecutor(deps) {
         return results.map(r => `[#${r.id} ${r.category}] ${r.content}${r.score ? ` (relevance: ${(r.score * 100).toFixed(0)}%)` : ''}`).join('\n');
       }
       case 'memory_forget': {
-        const removed = db.forget(input.category, input.query);
-        return removed > 0 ? `Forgot ${removed} item(s)` : 'Nothing found to forget.';
+        const removed = db.softForget(input.query);
+        return removed > 0 ? `Forgot ${removed} item(s) (marked as superseded)` : 'Nothing found to forget.';
+      }
+      case 'memory_pin': {
+        if (input.unpin) { db.unpin(input.id); return `Unpinned memory #${input.id}`; }
+        db.pin(input.id); return `Pinned memory #${input.id} — it will never decay`;
       }
       case 'memory_resolve': {
         const resolveId = Number(input.id);

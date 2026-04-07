@@ -157,46 +157,46 @@ function keywordOverride(message) {
   const lower = message.toLowerCase();
   // Catch "ask/tell/message/text/ping [name]" patterns — always needs send_message tool
   if (/\b(ask|tell|message|text|ping|remind|update|notify|email)\s+[a-z]{2,}/.test(lower) && !/\b(me|you|yourself)\b/.test(lower.match(/\b(?:ask|tell|message|text|ping|remind|update|notify|email)\s+([a-z]+)/)?.[1] || '')) {
-    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: messaging action detected', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 4, confidence: 1.0, needs_review: false, reason: 'keyword override: messaging action detected', classifier_ms: 0 };
   }
   if (TOOL_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: laptop/tool action', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 4, confidence: 1.0, needs_review: false, reason: 'keyword override: laptop/tool action', classifier_ms: 0 };
   }
   if (PURCHASE_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'full', escalation_score: 8, needs_review: true, reason: 'keyword override: purchase/booking flow', classifier_ms: 0 };
+    return { route: 'full', escalation_score: 8, confidence: 1.0, needs_review: true, reason: 'keyword override: purchase/booking flow', classifier_ms: 0 };
   }
   if (VAULT_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'hybrid', escalation_score: 7, needs_review: false, reason: 'keyword override: vault operation', classifier_ms: 0 };
+    return { route: 'hybrid', escalation_score: 7, confidence: 1.0, needs_review: false, reason: 'keyword override: vault operation', classifier_ms: 0 };
   }
   if (VIDEO_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: video analysis', classifier_ms: 0 };
+    return { route: 'full', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: video analysis', classifier_ms: 0 };
   }
   if (UIUX_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'full', escalation_score: 5, needs_review: false, reason: 'keyword override: UI/UX design system', classifier_ms: 0 };
+    return { route: 'full', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: UI/UX design system', classifier_ms: 0 };
   }
   if (KIMI_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'kimi', escalation_score: 5, needs_review: false, reason: 'keyword override: structured artifact production', classifier_ms: 0 };
+    return { route: 'kimi', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: structured artifact production', classifier_ms: 0 };
   }
   if (MINI_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'mini', escalation_score: 1, needs_review: false, reason: 'keyword override: simple/mechanical task', classifier_ms: 0 };
+    return { route: 'mini', escalation_score: 1, confidence: 1.0, needs_review: false, reason: 'keyword override: simple/mechanical task', classifier_ms: 0 };
   }
   if (GEMINI_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'gemini', escalation_score: 5, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
+    return { route: 'gemini', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: large document analysis', classifier_ms: 0 };
   }
   if (TEACH_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: teach mode', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: teach mode', classifier_ms: 0 };
   }
   if (BUILD_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 6, needs_review: false, reason: 'keyword override: build mode activation', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 6, confidence: 1.0, needs_review: false, reason: 'keyword override: build mode activation', classifier_ms: 0 };
   }
   if (GUARDIAN_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 5, needs_review: false, reason: 'keyword override: guardian scan', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 5, confidence: 1.0, needs_review: false, reason: 'keyword override: guardian scan', classifier_ms: 0 };
   }
   if (REMOTE_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 3, needs_review: false, reason: 'keyword override: remote code session', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 3, confidence: 1.0, needs_review: false, reason: 'keyword override: remote code session', classifier_ms: 0 };
   }
   if (SELFCHECK_KEYWORDS.some(kw => lower.includes(kw))) {
-    return { route: 'tool', escalation_score: 4, needs_review: false, reason: 'keyword override: self-check', classifier_ms: 0 };
+    return { route: 'tool', escalation_score: 4, confidence: 1.0, needs_review: false, reason: 'keyword override: self-check', classifier_ms: 0 };
   }
   return null;
 }
@@ -220,12 +220,16 @@ Escalation scoring (0-10):
 7-10: High stakes, must use full
 
 Respond ONLY with valid JSON:
-{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","escalation_score":0,"needs_review":false,"reason":"one line"}
+{"route":"tool|memory|chat|mini|claude|gemini|kimi|agent|full|hybrid","confidence":0.9,"escalation_score":0,"needs_review":false,"reason":"one line"}
+
+confidence: 0.0-1.0. How sure you are this is the right route. Use <0.6 if the message is ambiguous or could fit multiple routes.
 
 Context (last 300 chars): ${recentContext.slice(-300)}
 
 Message: ${message}`;
-    const raw = await runClaudeCLI(classifyPrompt, 20000) || '';
+    let raw = await runClaudeCLI(classifyPrompt, 20000) || '';
+    // Strip markdown code fences that Claude sometimes wraps around JSON
+    raw = raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     let decision;
     try {
       decision = JSON.parse(raw);
@@ -240,10 +244,18 @@ Message: ${message}`;
       }
     }
     decision.classifier_ms = Date.now() - start;
+    const _conf = Number(decision.confidence); decision.confidence = Number.isFinite(_conf) ? _conf : 0.5;
+    // Low confidence: fall back to full route for safety
+    if (decision.confidence < 0.5) {
+      console.warn(`[ROUTER] Low confidence ${decision.confidence} for "${message.slice(0, 60)}" (was: ${decision.route}) — falling back to full`);
+      decision.original_route = decision.route;
+      decision.route = 'full';
+      decision.reason = `low confidence fallback (was: ${decision.original_route}, conf: ${decision.confidence})`;
+    }
     return decision;
   } catch (e) {
-    console.warn('[ROUTER] Classification failed, defaulting to chat:', e.message);
-    return { route: 'chat', escalation_score: 0, needs_review: false, reason: 'classification error — fallback', classifier_ms: Date.now() - start };
+    console.warn('[ROUTER] Classification failed, defaulting to full:', e.message);
+    return { route: 'full', escalation_score: 0, confidence: 0, needs_review: false, reason: 'classification failed', classifier_ms: Date.now() - start };
   }
 }
 
@@ -391,6 +403,7 @@ function logTelemetry(db, data) {
       contact TEXT,
       route TEXT,
       escalation_score INTEGER,
+      confidence REAL,
       model_used TEXT,
       tools_used TEXT,
       needs_review INTEGER,
@@ -400,13 +413,16 @@ function logTelemetry(db, data) {
       reason TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     )`);
+    // Add confidence column if missing (existing tables)
+    try { rawDb.exec('ALTER TABLE router_telemetry ADD COLUMN confidence REAL DEFAULT 0.5'); } catch (_) {}
     rawDb.prepare(`INSERT INTO router_telemetry
-      (contact, route, escalation_score, model_used, tools_used, needs_review, success, classifier_ms, total_ms, reason)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
+      (contact, route, escalation_score, confidence, model_used, tools_used, needs_review, success, classifier_ms, total_ms, reason)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       data.contact || '',
       data.route || 'full',
       data.escalation_score || 0,
+      Number.isFinite(data.confidence) ? data.confidence : 0.5,
       data.model_used || 'gpt-4o',
       JSON.stringify(data.tools_used || []),
       data.needs_review ? 1 : 0,

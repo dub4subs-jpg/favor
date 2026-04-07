@@ -64,10 +64,14 @@ function buildMemoryPrompt(db, relevantMemories = [], contact = null) {
     }
   }
 
-  // Reinforce: touch all memories that made it into the prompt
+  // Reinforce: touch all memories that made it into the prompt (including auto-recalled)
   const allUsedIds = [];
   for (const cat of [facts, decisions, preferences, workflows, ideas, projectUpdates, personalities]) {
     for (const m of cat) if (m.id) allUsedIds.push(m.id);
+  }
+  // Also reinforce auto-recalled relevant memories that were injected
+  if (relevantMemories.length) {
+    for (const r of relevantMemories) if (r.id) allUsedIds.push(r.id);
   }
   if (allUsedIds.length) {
     try { db.touchMany(allUsedIds); } catch (_) {}
@@ -154,6 +158,22 @@ function buildSystemPrompt({ config, db, compactor, platform, contact, messageTe
   const contextPrefix = compactor.getContextPrefix(contact || '');
   const securityPhrase = (platform === 'telegram' ? config.telegram?.securityPhrase : config.whatsapp?.securityPhrase) || 'NOT_SET';
 
+  // Session gap awareness: if >4 hours since last interaction with this contact,
+  // add a note so the bot doesn't awkwardly continue as if no time passed
+  let sessionGapNote = '';
+  try {
+    const profile = db.getContactProfile(contact);
+    if (profile?.last_interaction) {
+      const gapMs = Date.now() - new Date(profile.last_interaction).getTime();
+      const gapHours = Math.floor(gapMs / 3600000);
+      if (gapHours >= 4 && gapHours < 48) {
+        sessionGapNote = `\n\n[SESSION GAP: ${gapHours} hours since last interaction with this person. Smoothly continue — don't explicitly mention the gap unless they do. Your conversation memory above has the context.]`;
+      } else if (gapHours >= 48) {
+        sessionGapNote = `\n\n[SESSION GAP: ${Math.floor(gapHours / 24)} days since last interaction. Check conversation memory above for context on what was last discussed. Re-establish context naturally if needed.]`;
+      }
+    }
+  } catch (_) {}
+
   return `You are ${name}. Your identity, rules, and knowledge are defined in your knowledge files — read them carefully, they ARE you.
 
 Your operator's laptop: user "${config.laptop.user}", IP ${config.laptop.host}.
@@ -184,7 +204,7 @@ Then start executing step 1. Each subsequent tool call should reference which pl
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
 
 MEMORY SYNC: You have sync_update and sync_recover tools. Use sync_update to log important actions, decisions, task completions, and file changes so Claude Code stays in sync with your state. Use sync_recover after any restart to rebuild context from shared state.
-Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories, contact) + buildThreadPrompt(db, contact) + `
+Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories, contact) + buildThreadPrompt(db, contact) + sessionGapNote + `
 
 === REMINDER ===
 You MUST follow all rules in your knowledge base above — especially your identity, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;

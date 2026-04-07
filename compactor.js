@@ -49,7 +49,7 @@ class Compactor {
         return { compacted: false, messages };
       }
 
-      await this._extractFacts(toCompact);
+      await this._extractFacts(toCompact, contact);
       this.db.saveCompactionSummary(contact, summary, toCompact.length);
       this.db.audit('compaction', `contact=${contact.substring(0, 15)} msgs=${toCompact.length}`);
 
@@ -127,7 +127,7 @@ ${transcript.substring(0, 8000)}`;
     return result || '';
   }
 
-  async _extractFacts(messages) {
+  async _extractFacts(messages, contact = null) {
     try {
       const transcript = messages.map(m => {
         if (typeof m.content === 'string') return m.content;
@@ -137,23 +137,45 @@ ${transcript.substring(0, 8000)}`;
 
       if (transcript.length < 50) return;
 
-      const factPrompt = `Extract ONLY concrete, reusable facts from this conversation. Return JSON: {"facts": ["fact1", "fact2", ...]}. Include: names, dates, prices, decisions, preferences, contact info, project details, deadlines. Skip: greetings, small talk, tool call details, generic statements. Return {"facts": []} if nothing worth saving. MAX 5 items. Respond ONLY with valid JSON, no other text.
-
-Extract key facts:
+      const factPrompt = `Extract concrete, reusable knowledge from this conversation before it gets summarized. Return JSON with categorized items:
+{"facts": ["specific name/date/price/detail"], "decisions": ["what was decided and why"], "promises": ["commitments made to someone"]}
+Rules:
+- Include: names, dates, prices, decisions, preferences, contact info, deadlines, commitments
+- Skip: greetings, small talk, tool call details, generic statements
+- Each item max 200 chars, max 5 items per category
+- Return {"facts":[],"decisions":[],"promises":[]} if nothing worth saving
+- Respond ONLY with valid JSON, no other text
 
 ${transcript}`;
 
-      const raw = (await runClaudeHaiku(factPrompt)) || '{"facts":[]}';
-      const facts = JSON.parse(raw).facts || [];
+      let raw = (await runClaudeHaiku(factPrompt)) || '{"facts":[],"decisions":[],"promises":[]}';
+      // Strip markdown code fences that Claude sometimes wraps around JSON
+      raw = raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+      const parsed = JSON.parse(raw);
+      let savedCount = 0;
 
-      if (Array.isArray(facts)) {
-        for (const fact of facts.slice(0, 5)) {
-          if (typeof fact === 'string' && fact.length > 5) {
-            this.db.save('fact', `[auto-extracted] ${fact}`, null);
-          }
+      // Save facts (scoped to contact to prevent cross-contact leakage)
+      for (const fact of (parsed.facts || []).slice(0, 5)) {
+        if (typeof fact === 'string' && fact.length > 5) {
+          this.db.save('fact', `[pre-compact] ${fact}`, null, null, contact);
+          savedCount++;
         }
-        if (facts.length > 0) console.log(`[COMPACT] Extracted ${facts.length} facts before compaction`);
       }
+      // Save decisions (these are high-value — often lost in compaction)
+      for (const dec of (parsed.decisions || []).slice(0, 5)) {
+        if (typeof dec === 'string' && dec.length > 5) {
+          this.db.save('decision', `[pre-compact] ${dec}`, null, null, contact);
+          savedCount++;
+        }
+      }
+      // Save promises/commitments (critical — user will expect follow-through)
+      for (const promise of (parsed.promises || []).slice(0, 3)) {
+        if (typeof promise === 'string' && promise.length > 5) {
+          this.db.save('task', `[pre-compact] ${promise}`, 'pending', null, contact);
+          savedCount++;
+        }
+      }
+      if (savedCount > 0) console.log(`[COMPACT] Extracted ${savedCount} items (facts/decisions/promises) before compaction`);
     } catch (e) {
       console.warn('[COMPACT] Fact extraction failed (non-fatal):', e.message);
     }

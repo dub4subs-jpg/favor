@@ -27,7 +27,7 @@ const MessageQueue = require('./message-queue');
 const ToolAudit = require('./tool-audit');
 const AdaptiveTimeouts = require('./adaptive-timeouts');
 const Planner = require('./planner');
-const DellAPI = require('./api');
+const FavorAPI = require('./api');
 const AccessControl = require('./core/access-control');
 const CommandHandler = require('./core/command-handler');
 const MediaHandler = require('./core/media-handler');
@@ -353,8 +353,8 @@ try {
 }
 
 // ─── REST API + DASHBOARD ───
-const dellAPI = new DellAPI({ db, config, messageQueue, costTracker: typeof costTracker !== 'undefined' ? costTracker : null, guardian, planner, analytics });
-dellAPI.start();
+const favorAPI = new FavorAPI({ db, config, messageQueue, costTracker: typeof costTracker !== 'undefined' ? costTracker : null, guardian, planner, analytics });
+favorAPI.start();
 
 // ─── VERSION-AWARE STARTUP MESSAGE ───
 // On first boot after an update, tell the operator what changed in plain language.
@@ -550,6 +550,30 @@ fs.watch(path.resolve(__dirname, config.knowledge.dir), { persistent: false }, (
   setTimeout(() => embedKnowledgeFiles(), 2000);
 });
 
+// ─── FAST-PATH CACHE — avoid re-running expensive semantic search for repeated queries ───
+const _queryCache = new Map();
+const QUERY_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const QUERY_CACHE_MAX = 50;
+
+function getCachedQuery(key) {
+  const entry = _queryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) { _queryCache.delete(key); return null; }
+  return entry.data;
+}
+
+function setCachedQuery(key, data) {
+  // Evict oldest entries if over max
+  if (_queryCache.size >= QUERY_CACHE_MAX) {
+    const oldest = _queryCache.keys().next().value;
+    _queryCache.delete(oldest);
+  }
+  _queryCache.set(key, { data, expires: Date.now() + QUERY_CACHE_TTL });
+}
+
+// Expose cache clear globally so tool-executor can invalidate on memory_save
+global._favorQueryCacheClear = () => _queryCache.clear();
+
 // ─── SEMANTIC MEMORY ───
 async function getEmbedding(text) {
   // Local embeddings (all-MiniLM-L6-v2) — no API key needed
@@ -597,13 +621,64 @@ ${snippet}`;
 }
 
 // ─── AUTO-RECALL: fetch relevant memories for incoming message ───
-async function autoRecallMemories(messageText) {
+// Enhanced with contextual memory frames: combines semantic search
+// with contact context and active topic for richer recall
+async function autoRecallMemories(messageText, contact = null) {
   if (!messageText || messageText.length < 5) return [];
   try {
+    // Check fast-path cache first
+    const cacheKey = `recall:${(contact || '').slice(0, 20)}:${messageText.slice(0, 100)}`;
+    const cached = getCachedQuery(cacheKey);
+    if (cached) return cached;
+
     const qEmb = await getEmbedding(messageText.slice(0, 512));
     const results = db.searchSemantic(qEmb, 10);
     // Only include memories with high relevance (score > 0.3)
-    return results.filter(r => r.score > 0.3);
+    let recalled = results.filter(r => r.score > 0.3);
+
+    // Contextual frame: also pull contact-specific memories if available
+    if (contact) {
+      try {
+        const contactMems = db.searchContactMemories(contact, messageText, 3);
+        // Merge contact memories (avoid duplicates by ID)
+        const existingIds = new Set(recalled.map(r => r.id));
+        for (const cm of contactMems) {
+          if (!existingIds.has(cm.id)) {
+            recalled.push({ ...cm, score: 0.35, _source: 'contact' });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Graph-powered recall: if any recalled memories mention known entities,
+    // pull 1-hop connections for richer context
+    try {
+      if (typeof db.searchGraph === 'function') {
+        const mentionedNames = new Set();
+        for (const mem of recalled) {
+          // Extract capitalized proper nouns (likely entity names)
+          const names = (mem.content || '').match(/\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]{2,})*/g);
+          if (names) names.forEach(n => mentionedNames.add(n));
+        }
+        // Look up top 3 mentioned names in entity graph
+        for (const name of [...mentionedNames].slice(0, 3)) {
+          const graph = db.searchGraph(name);
+          if (graph.relationships.length) {
+            const graphContext = graph.relationships.slice(0, 3).map(r =>
+              `${r.from_name} ${r.relationship} ${r.to_name}`
+            ).join('; ');
+            recalled.push({
+              id: null, category: 'graph', content: `[graph] ${name}: ${graphContext}`,
+              score: 0.3, _source: 'graph'
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Cache the result for fast repeated queries
+    setCachedQuery(cacheKey, recalled);
+    return recalled;
   } catch (e) {
     // Fast keyword fallback
     return db.search(messageText.split(/\s+/).slice(0, 5).join(' ')).slice(0, 5);
@@ -934,6 +1009,46 @@ const AUTH_DIR = config.whatsapp?.credentialsDir || path.join(__dirname, 'auth-s
 let sock;
 let restartAttempts = 0;
 
+// ─── SHARED SERVICES (janitor, SiYuan — runs on ALL platforms) ───
+async function scheduleSharedServices() {
+  // Memory janitor (every 24 hours — dedup + prune stale memories)
+  if (!global._janitorScheduled) {
+    global._janitorScheduled = true;
+    const janitorCycle = async () => {
+      try {
+        const janitor = require('./memory-janitor');
+        const result = await janitor.run(db);
+        console.log('[JANITOR] Cycle complete:', JSON.stringify(result));
+      } catch (e) {
+        if (e.code !== 'MODULE_NOT_FOUND') {
+          console.error('[JANITOR] Failed:', e.message);
+          db.audit('janitor.error', e.message);
+        }
+      }
+    };
+    setInterval(janitorCycle, 24 * 60 * 60 * 1000);
+    setTimeout(janitorCycle, 10 * 60 * 1000);
+    console.log('[JANITOR] Memory consolidation scheduled (every 24h, first run in 10min)');
+  }
+
+  // SiYuan structured memory notice (one-time on boot)
+  if (!global._siyuanNoticed) {
+    global._siyuanNoticed = true;
+    try {
+      const siyuan = require('./siyuan-bridge');
+      await siyuan.init();
+      const h = await siyuan.health();
+      if (!h.connected) {
+        console.log('[SIYUAN] Structured memory available — run ./setup-siyuan.sh to enable queryable contacts, invoices, and knowledge graphs');
+      } else {
+        console.log('[SIYUAN] Connected to SiYuan structured memory');
+      }
+    } catch (_) {
+      console.log('[SIYUAN] Structured memory available — run ./setup-siyuan.sh to enable');
+    }
+  }
+}
+
 async function startWhatsApp() {
   // Clean up previous socket to prevent overlapping connections (fixes 440 loop)
   if (sock) {
@@ -1117,6 +1232,9 @@ async function startWhatsApp() {
           };
           scheduleNextSelfCheck();
         }
+
+        // Schedule shared services (janitor, SiYuan) for WhatsApp platform
+        scheduleSharedServices();
       }
     }
 
@@ -1236,6 +1354,9 @@ async function startTelegram() {
         fact_type: 'session'
       });
       syncBot.createCheckpoint(syncBot.loadState(), 'bot_connected');
+
+      // Schedule shared services (janitor, SiYuan) for non-WhatsApp platforms
+      scheduleSharedServices();
 
       // Send startup confirmation to operator
       if (!global._startupMessageSent && config.telegram?.operatorChatId) {
@@ -1531,7 +1652,7 @@ async function handleMessage(msg) {
     const messageTextForRecall = body || '';
     let relevantMemories = [];
     try {
-      relevantMemories = await autoRecallMemories(messageTextForRecall);
+      relevantMemories = await autoRecallMemories(messageTextForRecall, jid);
       if (relevantMemories.length) console.log(`[MEMORY] Auto-recalled ${relevantMemories.length} relevant memories`);
     } catch (e) {
       console.warn('[MEMORY] Auto-recall failed (non-fatal):', e.message);
@@ -2015,6 +2136,9 @@ Run the Bash command NOW.`;
       db.audit('security.key_leak', 'API key detected in outgoing message — redacted');
     }
 
+    // Format for WhatsApp: clean up markdown, fix formatting (skip for Telegram/Evolution)
+    if (PLATFORM === 'whatsapp') reply = formatForWhatsApp(reply);
+
     if (reply.length > 4000) {
       const chunks = splitMessage(reply, 4000);
       for (const c of chunks) await sock.sendMessage(jid, { text: c });
@@ -2054,7 +2178,7 @@ Run the Bash command NOW.`;
             : '';
 
           const extractPrompt = `Extract key information from this conversation. Return ONLY valid JSON:
-{"facts":[{"category":"fact|preference|decision|idea|project_update|task","content":"concise fact","detail":"optional elaboration for ideas/decisions"}],"directives":[{"rule":"permanent rule","context":"why"}],"entities":[{"name":"Name","type":"person|company|product|project|location","metadata":{}}],"relationships":[{"from":"Entity A","to":"Entity B","type":"works_at|supplies|owns|knows|uses","context":"brief context"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"${activeEntries ? ',"resolved":[1,2]' : ''}}
+{"facts":[{"category":"fact|preference|decision|idea|project_update|task","content":"concise fact","detail":"optional elaboration for ideas/decisions"}],"corrections":[{"wrong":"what was incorrect","right":"the correct information","search":"keyword to find the wrong memory"}],"directives":[{"rule":"permanent rule","context":"why"}],"entities":[{"name":"Name","type":"person|company|product|project|location","metadata":{}}],"relationships":[{"from":"Entity A","to":"Entity B","type":"works_at|supplies|owns|knows|uses","context":"brief context"}],"journal":"1-line summary of what was discussed/decided/requested in this exchange","journal_category":"exchange|decision|task|pending"${activeEntries ? ',"resolved":[1,2]' : ''}}
 
 Rules:
 - facts: 0-3 key facts worth remembering. Skip greetings/small talk. Categories:
@@ -2067,6 +2191,7 @@ Rules:
   For ideas: content = the concept name, detail = what it does / who it's for / why it's interesting (1-2 sentences)
   For decisions: detail = brief reasoning if given
   "detail" is optional — omit for facts/preferences/tasks
+- corrections: 0-2 corrections where the user said something was WRONG ("no that's wrong", "actually it's X", "not Y, it's Z"). "wrong" = what was incorrect, "right" = the correct info, "search" = keyword to find the bad memory. Return [] if no corrections.
 - directives: 0-2 STANDING ORDERS from the operator — permanent rules like "never do X", "always do Y", "stop doing Z", "from now on...", "don't ever...". Only real commands, not casual preferences.
 - entities: people, companies, products, projects mentioned. Include metadata like role/title if apparent.
 - relationships: connections between entities. Only include if clearly stated.
@@ -2106,6 +2231,35 @@ Bot replied: ${reply.substring(0, 600)}`;
               if (typeof id === 'number' && id > 0) {
                 scribe.resolve(id);
                 console.log(`[SCRIBE] Auto-resolved entry #${id}`);
+              }
+            }
+          }
+
+          // ─── CORRECTION DETECTION: find and fix wrong memories ───
+          if (parsed.corrections && Array.isArray(parsed.corrections)) {
+            for (const cor of parsed.corrections.slice(0, 2)) {
+              if (!cor || !cor.search || !cor.right) continue;
+              try {
+                // Find the wrong memory by keyword search (check contact-scoped first, then global)
+                let wrongMems = db.searchContactMemories ? db.searchContactMemories(jid, cor.search, 5) : [];
+                if (!wrongMems.length) wrongMems = db.search(cor.search).slice(0, 5);
+                let corrected = 0;
+                for (const wm of wrongMems) {
+                  // Check if this memory contains the wrong info
+                  if (cor.wrong && wm.content.toLowerCase().includes(cor.wrong.toLowerCase().substring(0, 30))) {
+                    db.db.prepare("UPDATE memories SET status = 'superseded', updated_at = datetime('now') WHERE id = ?").run(wm.id);
+                    corrected++;
+                    console.log(`[CORRECTION] Superseded memory #${wm.id}: "${wm.content.substring(0, 60)}"`);
+                  }
+                }
+                // Save the correct information as a new memory (scoped to contact)
+                const memId = db.save('fact', `[corrected] ${cor.right}`, null, null, jid);
+                getEmbedding(cor.right).then(emb => db.updateEmbedding(memId, emb)).catch(() => {});
+                console.log(`[CORRECTION] Saved correct info → memory #${memId}: "${cor.right.substring(0, 60)}" (superseded ${corrected} old)`);
+                // Invalidate recall cache so corrected info is immediately available
+                _queryCache.clear();
+              } catch (e) {
+                console.warn('[CORRECTION] Failed:', e.message);
               }
             }
           }
@@ -2276,6 +2430,26 @@ Your reply: ${reply.substring(0, 500)}`;
   }
 }
 
+// ─── WHATSAPP RESPONSE FORMATTING ───
+// Cleans up markdown that doesn't render on WhatsApp and improves readability
+function formatForWhatsApp(text) {
+  if (!text || typeof text !== 'string') return text;
+  let t = text;
+  // Convert markdown headers to WhatsApp bold
+  t = t.replace(/^#{1,3}\s+(.+)$/gm, '*$1*');
+  // Convert markdown bold **text** to WhatsApp bold *text*
+  t = t.replace(/\*\*(.+?)\*\*/g, '*$1*');
+  // Remove markdown link syntax [text](url) → text (url)
+  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+  // Remove triple backtick code blocks (keep content, add spacing)
+  t = t.replace(/```[\w]*\n?([\s\S]*?)```/g, '$1');
+  // Remove horizontal rules
+  t = t.replace(/^[-*_]{3,}$/gm, '');
+  // Collapse 3+ newlines to 2
+  t = t.replace(/\n{3,}/g, '\n\n');
+  return t.trim();
+}
+
 function splitMessage(text, maxLen) {
   const chunks = [];
   let rem = text;
@@ -2344,7 +2518,7 @@ const OPERATOR_JID = PLATFORM === 'telegram'
   : (config.whatsapp?.operatorNumber || '').replace('+', '') + '@s.whatsapp.net';
 
 // Log token on startup so tool-runner.js can use it
-console.log(`[NOTIFY] API token: ${NOTIFY_TOKEN} (set "notifyToken" in config.json to fix this)`);
+console.log(`[NOTIFY] API ready (token: ${NOTIFY_TOKEN.substring(0, 4)}...${NOTIFY_TOKEN.substring(NOTIFY_TOKEN.length - 4)})`);
 reaper.setNotifyToken(NOTIFY_TOKEN);
 
 const notifyServer = http.createServer((req, res) => {
