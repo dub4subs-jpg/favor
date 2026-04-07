@@ -1,6 +1,7 @@
 // router.js — Decision Router + Multi-Brain Orchestration Layer for Favor
 // Classifies each request and routes to the most efficient execution path
 
+const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
@@ -266,10 +267,28 @@ function getClaudeTip() {
   return '\n\n💡 *Tip:* Install Claude Code CLI for much better conversations. Run `curl -fsSL https://claude.ai/install.sh | sh` on your server, then `claude login`. Requires a Claude Pro ($20/mo) or Max ($100/mo) subscription.';
 }
 
-// ─── CLAUDE CLI EXECUTOR (with concurrency limit, circuit breaker + partial output recovery) ───
-const CLI_MAX_CONCURRENT = 2;
+// ─── CLI CONFIG (hot-reloaded every 5s from config.json) ───
+function _loadCliConfig() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(require('path').join(__dirname, 'config.json'), 'utf8'));
+    return cfg.cli || {};
+  } catch { return {}; }
+}
+let _cliConfig = _loadCliConfig();
+fs.watchFile(require('path').join(__dirname, 'config.json'), { interval: 5000 }, () => { _cliConfig = _loadCliConfig(); });
+
+function getCliTimeouts(route) {
+  const t = _cliConfig.timeouts?.[route];
+  if (Array.isArray(t)) return t;
+  if (typeof t === 'number') return [t];
+  return null; // caller uses its own default
+}
+
+// ─── CLAUDE CLI EXECUTOR (with priority queue, concurrency limit, circuit breaker + partial output recovery) ───
+const CLI_MAX_CONCURRENT = _cliConfig.maxConcurrent || 3;
+const CLI_DEFAULT_MODEL = _cliConfig.model || null; // e.g. 'sonnet' — applied when no model is explicitly passed
 let _cliRunning = 0;
-const _cliQueue = [];
+const _cliQueue = []; // { priority, run, id } — lower number = higher priority
 
 // ─── CLI CIRCUIT BREAKER ───
 // Trips after consecutive failures to prevent zombie CLI processes from starving the connection
@@ -308,12 +327,21 @@ function _cliCircuitRecordFailure(err) {
 
 function _drainQueue() {
   while (_cliQueue.length > 0 && _cliRunning < CLI_MAX_CONCURRENT) {
-    const next = _cliQueue.shift();
-    next();
+    // Pick highest priority (lowest number) item
+    let bestIdx = 0;
+    for (let i = 1; i < _cliQueue.length; i++) {
+      if (_cliQueue[i].priority < _cliQueue[bestIdx].priority) bestIdx = i;
+    }
+    const next = _cliQueue.splice(bestIdx, 1)[0];
+    next.run();
   }
 }
 
-function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model } = {}) {
+function getCliStatus() {
+  return { running: _cliRunning, queued: _cliQueue.length, circuitOpen: _cliCircuitOpen, consecutiveFailures: _cliConsecutiveFailures };
+}
+
+function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model, priority = 0 } = {}) {
   if (!CLAUDE_AVAILABLE) {
     return Promise.reject(new Error('Claude Code CLI not installed'));
   }
@@ -321,48 +349,53 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
     const remainSec = Math.round((CLI_CB_COOLDOWN_MS - (Date.now() - _cliCircuitOpenedAt)) / 1000);
     return Promise.reject(new Error(`CLI circuit breaker open — ${remainSec}s until retry`));
   }
-  // Use spawn + stdin for long prompts (avoids arg length limits)
-  // allowTools: grant Bash+Read so Claude can send messages via localhost:3099 and read images
-  // model: optional model override (e.g. 'haiku' for fast/cheap tasks)
   return new Promise((resolve, reject) => {
     const run = () => {
       _cliRunning++;
-      const args = ['--print'];
-      if (model) args.push('--model', model);
+      const args = ['--print', '--bare'];
+      const effectiveModel = model || CLI_DEFAULT_MODEL;
+      if (effectiveModel) args.push('--model', effectiveModel);
       if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');
       args.push('-');
       const proc = spawn(CLAUDE_BIN, args, {
-        timeout: timeoutMs,
         env: claudeEnv(),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       // Register with process reaper for cleanup of stale processes
       try {
         const registry = require('./process-registry');
-        registry.register(proc, { source: 'router', purpose: 'cli-task', timeoutMs, model: model || 'default' });
+        registry.register(proc, { source: 'router', purpose: 'cli-task', timeoutMs, model: effectiveModel || 'default' });
       } catch {}
-      let stdout = '', stderr = '';
+      let stdout = '', stderr = '', killed = false;
+      // Manual timeout — spawn's timeout option doesn't reliably kill tool-using processes
+      const timer = setTimeout(() => {
+        killed = true;
+        try { proc.kill('SIGKILL'); } catch (_) {}
+      }, timeoutMs);
       proc.stdout.on('data', d => stdout += d);
       proc.stderr.on('data', d => stderr += d);
       proc.on('close', (code) => {
+        clearTimeout(timer);
         _cliRunning--;
         _drainQueue();
         const out = stdout.trim() || stderr.trim() || '(no output)';
-        // If timed out (143=SIGTERM) but we got partial output, check if it's usable
+        // If exited non-zero but we got partial output, check if it's usable
         if (code !== 0 && stdout.trim()) {
           const partial = stdout.trim();
+          const stderrMsg = stderr.trim();
           const isErrorMsg = /you've hit|rate limit|usage limit|error:|unauthorized|forbidden|not logged in|invalid api key/i.test(partial);
           if (isErrorMsg) {
+            console.warn(`[ROUTER] Claude CLI exited ${code} — output is an error message: ${partial.slice(0, 200)}`);
             const err = new Error(partial.slice(0, 500));
             _cliCircuitRecordFailure(err);
             reject(err);
           } else {
-            console.warn(`[ROUTER] Claude CLI exited ${code} but had partial output (${partial.length} chars) — using it`);
+            console.warn(`[ROUTER] Claude CLI exited ${code} with partial output (${partial.length} chars): ${partial.slice(0, 120)}${stderrMsg ? ` | stderr: ${stderrMsg.slice(0, 200)}` : ''}`);
             _cliCircuitRecordSuccess();
             resolve(partial.substring(0, 1024 * 1024 * 4));
           }
         } else if (code !== 0) {
-          const err = new Error(stderr.trim() || `exit code ${code}`);
+          const err = new Error(stderr.trim() || `exit code ${killed ? 'timeout' : code}`);
           _cliCircuitRecordFailure(err);
           reject(err);
         } else {
@@ -371,6 +404,7 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
         }
       });
       proc.on('error', (err) => {
+        clearTimeout(timer);
         _cliRunning--;
         _drainQueue();
         _cliCircuitRecordFailure(err);
@@ -381,8 +415,22 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model 
     };
 
     if (_cliRunning >= CLI_MAX_CONCURRENT) {
-      console.log(`[ROUTER] Claude CLI queued (${_cliQueue.length + 1} waiting, ${_cliRunning} running)`);
-      _cliQueue.push(run);
+      // Cap queue size to prevent unbounded growth
+      const CLI_MAX_QUEUE = 10;
+      if (_cliQueue.length >= CLI_MAX_QUEUE) {
+        return reject(new Error(`CLI queue full (${_cliQueue.length} waiting) — try again later`));
+      }
+      console.log(`[ROUTER] Claude CLI queued (${_cliQueue.length + 1} waiting, ${_cliRunning} running, priority=${priority})`);
+      // Per-item queue timeout — don't let items wait forever
+      const queueTimer = setTimeout(() => {
+        const idx = _cliQueue.findIndex(item => item.id === itemId);
+        if (idx !== -1) {
+          _cliQueue.splice(idx, 1);
+          reject(new Error('CLI queue timeout — waited too long'));
+        }
+      }, 120000); // 2 min max wait in queue
+      const itemId = Date.now() + Math.random();
+      _cliQueue.push({ priority, run: () => { clearTimeout(queueTimer); run(); }, id: itemId });
     } else {
       run();
     }
@@ -483,4 +531,4 @@ async function runGeminiAnalyst(prompt, costTracker = null) {
   }
 }
 
-module.exports = { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable: () => CLAUDE_AVAILABLE, getClaudeTip };
+module.exports = { classify, runClaudeCLI, getCliStatus, getCliTimeouts, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable: () => CLAUDE_AVAILABLE, getClaudeTip };

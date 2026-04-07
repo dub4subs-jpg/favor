@@ -8,6 +8,7 @@ class Anticipator {
   constructor(db, opts = {}) {
     this.db = db;
     this.scribe = opts.scribe || null;
+    this.timezone = opts.timezone || 'America/New_York';
     this.minConfidence = opts.minConfidence || 0.7;
     this._lastRun = 0;
     this._inFlight = false;
@@ -112,8 +113,9 @@ ${context}`;
 
     // Current time context
     const now = new Date();
-    const timeStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'long', hour: 'numeric', minute: '2-digit' });
-    parts.push(`Current time: ${timeStr} EST`);
+    const tz = this.timezone || 'America/New_York';
+    const timeStr = now.toLocaleString('en-US', { timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit' });
+    parts.push(`Current time: ${timeStr}`);
 
     return parts.join('\n\n');
   }

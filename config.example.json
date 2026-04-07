@@ -97,12 +97,25 @@
     "intervalMs": 180000,
     "lastContext": ""
   },
+  "cli": {
+    "maxConcurrent": 3,
+    "model": "sonnet",
+    "fallbackChain": ["claude-cli", "gemini"],
+    "timeouts": {
+      "chat": [90000, 120000],
+      "mini": [30000, 30000],
+      "claude": [90000],
+      "memory": [60000],
+      "vision": [90000]
+    }
+  },
   "alive": {
     "enabled": true,
     "morningCheckin": "09:00",
     "eveningCheckin": "21:00",
     "memoryCallbackHours": 8,
-    "timezoneOffsetHours": -5
+    "timezoneOffsetHours": -5,
+    "timezone": "America/New_York"
   },
   "guard": {
     "maxDailySpend": 5.00,

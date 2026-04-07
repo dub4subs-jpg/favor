@@ -67,8 +67,9 @@ class ContextEngine {
 
     // ─── TIME CONTEXT ───
     const nowDate = new Date();
-    const hour = nowDate.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
-    const dayOfWeek = nowDate.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'long' });
+    const tz = this.config?.timezone || 'America/New_York';
+    const hour = nowDate.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false });
+    const dayOfWeek = nowDate.toLocaleString('en-US', { timeZone: tz, weekday: 'long' });
     ctx.time = { hour: parseInt(hour), day: dayOfWeek };
     ctx.time_context =
       parseInt(hour) < 9 ? 'early_morning' :

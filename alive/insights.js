@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const { runCLI, isAvailable } = require('../utils/claude');
 
+const DEDUP_FILE = path.join(__dirname, '..', 'state', 'insights_dedup.json');
+
 function runClaudeHaiku(prompt, timeoutMs = 45000) {
   if (!isAvailable()) return Promise.reject(new Error('Claude Code CLI not installed'));
   return runCLI(prompt, { model: 'haiku', timeout: timeoutMs });
@@ -16,8 +18,40 @@ function runClaudeHaiku(prompt, timeoutMs = 45000) {
 class Insights {
   constructor(engine) {
     this.engine = engine;
-    this._recentInsights = []; // last N insight hashes to prevent repeats
-    this.MAX_RECENT = 20;
+    this._recentInsights = this._loadDedup(); // persisted across restarts
+    this.MAX_RECENT = 50;
+  }
+
+  _loadDedup() {
+    try {
+      if (fs.existsSync(DEDUP_FILE)) {
+        const data = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8'));
+        // Prune entries older than 7 days
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        return (data || []).filter(e => e.ts > cutoff);
+      }
+    } catch {}
+    return [];
+  }
+
+  _saveDedup() {
+    try {
+      fs.writeFileSync(DEDUP_FILE, JSON.stringify(this._recentInsights));
+    } catch {}
+  }
+
+  // Extract topic keywords for dedup — strips names/dates/filler to find the core subject
+  _topicHash(text) {
+    return text
+      .toLowerCase()
+      .replace(/\b(hey|heads up|want me to|should i|still|right now|got a?|you've got)\b/g, '')
+      .replace(/\b\d+\s*(days?|hours?|minutes?|ago|old|h|d|m)\b/g, '')
+      .replace(/[^a-z ]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .sort()
+      .join(' ')
+      .substring(0, 80);
   }
 
   ensureCrons(existingLabels) {
@@ -72,13 +106,15 @@ Rules:
 - Suggest a concrete next action.
 - Write it as a natural message, 2-4 sentences max.
 - If NOTHING is genuinely worth surfacing right now, respond with exactly: SKIP
-- Do NOT repeat insights already sent recently: ${this._recentInsights.slice(-5).join(', ') || 'none'}
+- Do NOT repeat insights already sent recently (topics covered): ${this._recentInsights.slice(-8).map(e => e.topic).join('; ') || 'none'}
 
-GROUNDING (critical):
+GROUNDING (critical — violating ANY of these = broken output):
 - ONLY report things that are EXPLICITLY stated in the data above. Never infer, combine, or synthesize across unrelated sources.
-- Do NOT invent external sources (LinkedIn, Twitter, Reddit, email, etc.) — you have NO access to those platforms.
+- Do NOT invent external sources (LinkedIn, Twitter, Reddit, email, news, etc.) — you have NO access to those platforms.
 - Do NOT fabricate posts, questions, or events that aren't directly quoted in the data.
-- Every claim must trace to a SINGLE specific item above (a conversation, task, decision, or thread). If you can't point to the exact source, say SKIP.`;
+- Do NOT attribute actions to people unless their exact name appears in the data above AND the specific action is described.
+- Every claim must trace to a SINGLE specific item above (a conversation, task, decision, or thread). If you can't point to the exact source, say SKIP.
+- If the data is thin or nothing is genuinely urgent, say SKIP. A false insight is worse than no insight.`;
 
     let reply = '';
     try {
@@ -93,14 +129,35 @@ GROUNDING (critical):
       return;
     }
 
-    // Dedup: hash the first 50 chars to avoid repeating the same insight
-    const hash = reply.substring(0, 50).toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (this._recentInsights.includes(hash)) {
-      console.log('[ALIVE] Insight is a repeat — skipping');
+    // Post-generation grounding check: reject if it mentions platforms we don't have access to
+    const fabricationPatterns = /\b(linkedin|twitter|reddit|facebook|instagram|stack\s*overflow|hacker\s*news)\b/i;
+    if (fabricationPatterns.test(reply)) {
+      console.log('[ALIVE] Insight references external platform (likely hallucinated) — skipping');
       return;
     }
-    this._recentInsights.push(hash);
+
+    // Reject if it names a person not present in the context data
+    const contextLower = context.toLowerCase();
+    const namedPersonMatch = reply.match(/\b([A-Z][a-z]{2,})\s+(asked|said|mentioned|posted|wrote|sent|requested|messaged)\b/g);
+    if (namedPersonMatch) {
+      for (const phrase of namedPersonMatch) {
+        const name = phrase.split(/\s+/)[0].toLowerCase();
+        if (!contextLower.includes(name)) {
+          console.log(`[ALIVE] Insight names "${name}" but they're not in the context — skipping`);
+          return;
+        }
+      }
+    }
+
+    // Dedup: topic-based hash catches rephrased versions of the same insight
+    const topic = this._topicHash(reply);
+    if (this._recentInsights.some(e => e.topic === topic)) {
+      console.log('[ALIVE] Insight is a repeat topic — skipping');
+      return;
+    }
+    this._recentInsights.push({ topic, ts: Date.now() });
     if (this._recentInsights.length > this.MAX_RECENT) this._recentInsights.shift();
+    this._saveDedup();
 
     // Send via notification queue or direct
     if (this.engine.notifQueue) {
@@ -149,9 +206,12 @@ GROUNDING (critical):
       }
     } catch {}
 
-    // 2. Pending tasks and their age
+    // 2. Pending tasks — only recent (≤3 days). Stale tasks are noise, not insights.
     try {
-      const tasks = e.db.getByCategory('task', 15).filter(t => t.status === 'pending' || t.status === 'active');
+      const maxAgeMs = 3 * 24 * 60 * 60 * 1000;
+      const tasks = e.db.getByCategory('task', 15)
+        .filter(t => (t.status === 'pending' || t.status === 'active'))
+        .filter(t => (Date.now() - new Date(t.created_at).getTime()) <= maxAgeMs);
       if (tasks.length) {
         const taskLines = tasks.map(t => {
           const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / (1000 * 60 * 60 * 24));

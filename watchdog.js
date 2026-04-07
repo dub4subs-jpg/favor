@@ -184,7 +184,8 @@ function sendAlert(alertType, message) {
     return;
   }
 
-  const fullMsg = `🛡️ WATCHDOG [${alertType}]\n${message}\n\n⏰ ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`;
+  const tz = (() => { try { return JSON.parse(fs.readFileSync(CONFIG.configPath, 'utf8')).alive?.timezone || 'America/New_York'; } catch { return 'America/New_York'; } })();
+  const fullMsg = `🛡️ WATCHDOG [${alertType}]\n${message}\n\n⏰ ${new Date().toLocaleString('en-US', { timeZone: tz })}`;
 
   info('ALERT', `Sending: [${alertType}] ${message}`);
 
