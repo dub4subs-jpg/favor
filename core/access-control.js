@@ -19,6 +19,7 @@ class AccessControl {
 
     // Tool access by role
     this.OPERATOR_ONLY_TOOLS = new Set([
+      'self_update',
       'server_exec', 'read_file', 'write_file',
       'laptop_run_command', 'laptop_write_file', 'laptop_read_file', 'laptop_list_files',
       'laptop_open_app', 'laptop_open_url', 'laptop_screenshot', 'laptop_status',

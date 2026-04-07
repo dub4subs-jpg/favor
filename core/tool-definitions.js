@@ -20,7 +20,8 @@ const TOOLS = [
   // ─── MEMORY TOOLS ───
   oaiTool('memory_save', 'Save to long-term memory. Use proactively for important facts, decisions, preferences, tasks, workflow observations, or personality observations about your own communication style.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task', 'workflow', 'personality'] }, content: { type: 'string' }, status: { type: 'string' } }, required: ['category', 'content'] }),
   oaiTool('memory_search', 'Search long-term memory.', { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }),
-  oaiTool('memory_forget', 'Remove from memory.', { type: 'object', properties: { category: { type: 'string', enum: ['fact', 'decision', 'preference', 'task'] }, query: { type: 'string' } }, required: ['category', 'query'] }),
+  oaiTool('memory_forget', 'Soft-forget memories matching a query (marks as superseded instead of deleting).', { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }),
+  oaiTool('memory_pin', 'Pin a memory so it never decays (for birthdays, core facts, allergies, etc). Use memory_search first to find the ID.', { type: 'object', properties: { id: { type: 'integer' }, unpin: { type: 'boolean', description: 'Set true to unpin instead' } }, required: ['id'] }),
   oaiTool('memory_resolve', 'Mark a memory/task as DONE so it stops being resurfaced. Use this when a task is completed, an invoice is sent, a decision is finalized, or any memory is no longer actionable. Search for the memory first to get its ID.', { type: 'object', properties: { id: { type: 'number', description: 'Memory ID to mark as resolved' } }, required: ['id'] }),
 
   // ─── SERVER TOOLS ───
@@ -36,6 +37,9 @@ const TOOLS = [
   oaiTool('cron_list', 'List all scheduled tasks.', { type: 'object', properties: {} }),
   oaiTool('cron_delete', 'Delete a scheduled task by ID.', { type: 'object', properties: { id: { type: 'number', description: 'Cron ID to delete' } }, required: ['id'] }),
   oaiTool('cron_toggle', 'Enable or disable a scheduled task.', { type: 'object', properties: { id: { type: 'number' }, enabled: { type: 'boolean' } }, required: ['id', 'enabled'] }),
+
+  // ─── SYSTEM TOOLS ───
+  oaiTool('self_update', 'Update the bot to the latest version from GitHub. Pulls new code, checks for errors, and restarts. Only the operator can use this. The bot will briefly go offline during restart.', { type: 'object', properties: { confirm: { type: 'boolean', description: 'Set to true to confirm the update' } }, required: ['confirm'] }),
 
   // ─── TOPIC TOOLS ───
   oaiTool('topic_create', 'Create a new conversation topic/branch.', { type: 'object', properties: { name: { type: 'string', description: 'Topic name' } }, required: ['name'] }),

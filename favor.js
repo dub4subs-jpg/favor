@@ -12,7 +12,7 @@ const FavorMemory = require('./db');
 const CronEngine = require('./cron');
 const Compactor = require('./compactor');
 const ConversationScribe = require('./scribe');
-const { classify, runClaudeCLI, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable, getClaudeTip } = require('./router');
+const { classify, runClaudeCLI, getCliStatus, getCliTimeouts, runKimi, runGeminiAnalyst, logTelemetry, isClaudeAvailable, getClaudeTip } = require('./router');
 const Vault = require('./vault');
 const Browser = require('./browser');
 const VideoProcessor = require('./video');
@@ -1842,29 +1842,53 @@ Respond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
         history.push({ role: 'assistant', content: reply });
       } catch (cliErr) {
         console.warn('[ROUTER] Claude CLI attempt 1 failed for chat/full:', cliErr.message);
-        // Retry with simplified prompt — do NOT fall back to GPT-4o
+        // Retry with reduced prompt (no tools, trimmed history)
+        const reducedHistory = recentHistory.split('\n\n').slice(-10).join('\n\n');
+        const reducedPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\n${reducedHistory}\n\nRespond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
         try {
-          const retryPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond to the latest message. Respond as ${config.identity?.name || 'Favor'}.`;
-          const cliResult = await runClaudeCLI(retryPrompt, 180000);
+          const cliResult = await runClaudeCLI(reducedPrompt, 180000);
           reply = cliResult;
           modelUsed = 'claude-cli';
           history.push({ role: 'assistant', content: reply });
-          console.log('[ROUTER] Claude CLI retry 1 succeeded');
-        } catch (retryErr1) {
-          console.warn('[ROUTER] Claude CLI attempt 2 failed:', retryErr1.message);
-          // Final attempt — minimal prompt
-          try {
-            const finalPrompt = `Reply to this message:\n\n${userText}`;
-            const cliResult = await runClaudeCLI(finalPrompt, 180000);
-            reply = cliResult;
-            modelUsed = 'claude-cli';
-            history.push({ role: 'assistant', content: reply });
-            console.log('[ROUTER] Claude CLI retry 2 succeeded');
-          } catch (retryErr2) {
-            console.error('[ROUTER] Claude CLI failed 3 times:', retryErr2.message);
-            reply = 'Sorry, I\'m having trouble thinking right now. Try again in a moment.';
-            modelUsed = 'claude-cli-failed';
-            history.push({ role: 'assistant', content: reply });
+          console.log('[ROUTER] Claude CLI retry succeeded (reduced prompt)');
+        } catch (retryErr) {
+          console.warn('[ROUTER] Claude CLI attempt 2 failed:', retryErr.message);
+          // Try fallback chain (gemini, etc.) if configured
+          const fallbackChain = config.cli?.fallbackChain || ['claude-cli'];
+          let fellBack = false;
+          for (const backend of fallbackChain) {
+            if (backend === 'claude-cli') continue; // already tried
+            if (backend === 'gemini' && (process.env.GEMINI_API_KEY || config.api?.geminiApiKey)) {
+              try {
+                const fallbackHistory = recentHistory.split('\n\n').slice(-8).join('\n\n');
+                const botName = config.identity?.name || 'Favor';
+                const minimalPrompt = `You are ${botName}, a personal AI assistant. Respond naturally and stay in character. If there's a noticeable delay, a brief acknowledgment is fine, then answer normally.\n\n=== CONVERSATION ===\n${fallbackHistory}\n\nRespond to the latest message. Be yourself.`;
+                reply = await runGeminiAnalyst(minimalPrompt);
+                modelUsed = 'gemini-fallback';
+                history.push({ role: 'assistant', content: reply });
+                console.log('[FALLBACK] Gemini replied successfully');
+                fellBack = true;
+                break;
+              } catch (gemErr) {
+                console.warn('[FALLBACK] Gemini also failed:', gemErr.message);
+              }
+            }
+          }
+          if (!fellBack) {
+            // All backends exhausted — minimal Claude attempt
+            try {
+              const finalPrompt = `Reply to this message:\n\n${userText}`;
+              const cliResult = await runClaudeCLI(finalPrompt, 180000);
+              reply = cliResult;
+              modelUsed = 'claude-cli';
+              history.push({ role: 'assistant', content: reply });
+              console.log('[ROUTER] Claude CLI minimal retry succeeded');
+            } catch (finalErr) {
+              console.error('[ROUTER] All backends failed:', finalErr.message);
+              reply = 'Sorry, I\'m having trouble thinking right now. Try again in a moment.';
+              modelUsed = 'claude-cli-failed';
+              history.push({ role: 'assistant', content: reply });
+            }
           }
         }
       }
@@ -1939,10 +1963,24 @@ Respond briefly and directly. Respond as ${config.identity?.name || 'Favor'}.`;
         modelUsed = 'claude-cli';
         history.push({ role: 'assistant', content: reply });
       } catch (cliErr) {
-        console.warn('[ROUTER] Claude CLI failed for mini, falling back to gpt-4o-mini:', cliErr.message);
+        console.warn('[ROUTER] Claude CLI failed for mini:', cliErr.message);
+        // Try Gemini fallback before GPT-4o-mini (if configured in fallback chain)
+        const fallbackChain = config.cli?.fallbackChain || ['claude-cli'];
+        if (fallbackChain.includes('gemini') && (process.env.GEMINI_API_KEY || config.api?.geminiApiKey)) {
+          try {
+            const botName = config.identity?.name || 'Favor';
+            const geminiMiniPrompt = `You are ${botName}, a personal AI assistant. Respond briefly and directly.\n\n=== CONVERSATION ===\nHuman: ${userText}\n\nRespond briefly.`;
+            reply = await runGeminiAnalyst(geminiMiniPrompt);
+            modelUsed = 'gemini-fallback';
+            history.push({ role: 'assistant', content: reply });
+            console.log('[FALLBACK] Gemini handled mini route');
+          } catch (gemErr) {
+            console.warn('[FALLBACK] Gemini mini also failed:', gemErr.message);
+          }
+        }
       }
 
-      // Fall back to gpt-4o-mini with tools if Claude CLI failed
+      // Fall back to gpt-4o-mini with tools if Claude CLI and Gemini both failed
       if (!reply && openai) {
         let miniResponse = await openai.chat.completions.create({
           model: 'gpt-4o-mini',

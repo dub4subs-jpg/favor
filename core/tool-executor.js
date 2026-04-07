@@ -905,6 +905,56 @@ ${pageContent}`;
         return removed ? `\ud83d\uddd1\ufe0f Deleted taught command #${input.id}` : `Command #${input.id} not found.`;
       }
 
+      case 'self_update': {
+        if (!input.confirm) return 'Pass confirm: true to proceed with the update.';
+        const SelfUpdater = require('./self-update');
+        const updater = new SelfUpdater({ botDir, mainFile: 'favor.js' });
+
+        // Notify operator that update is starting
+        try {
+          await sock.sendMessage(context.contact, { text: '🔄 *Updating...* Pulling latest code from GitHub. I\'ll be right back.' });
+        } catch (_) {}
+
+        const result = await updater.update();
+
+        if (!result.success) {
+          return `❌ *Update failed:* ${result.error}\n\nNo changes were made — I'm still running the previous version (${result.beforeCommit}).`;
+        }
+
+        if (result.alreadyUpToDate) {
+          return `✅ *Already up to date* (${result.beforeCommit})\n\nNo new updates available.`;
+        }
+
+        // Build the "what's new" message
+        const changeLines = result.changelog.map(l => `• ${l}`).join('\n');
+        const updateMsg = [
+          `✅ *Updated successfully!*`,
+          ``,
+          `📦 ${result.beforeCommit} → ${result.afterCommit}`,
+          ``,
+          `*What's new:*`,
+          changeLines,
+          result.stashed ? `\n⚠️ Local config changes were preserved.` : '',
+          result.willRestart ? `\n♻️ Restarting now — back in ~20 seconds...` : `\n⚠️ No pm2 process detected — restart manually.`,
+        ].filter(Boolean).join('\n');
+
+        // Send the update summary BEFORE restarting
+        try {
+          await sock.sendMessage(context.contact, { text: updateMsg });
+        } catch (_) {}
+
+        // Now restart if possible
+        if (result.willRestart) {
+          // Small delay so the message sends before process dies
+          setTimeout(() => {
+            updater.restartProcess();
+          }, 2000);
+          return '__SKIP__'; // Message already sent above
+        }
+
+        return updateMsg;
+      }
+
       default: return 'Unknown tool: ' + name;
     }
   }
