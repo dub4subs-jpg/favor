@@ -78,6 +78,15 @@ class Checkins {
       return;
     }
 
+    // Catch "nothing to report" anti-pattern — LLM sometimes writes a verbose
+    // "everything's fine" message instead of saying SKIP as instructed.
+    // Only suppress short replies (<100 chars) to avoid killing legitimate content.
+    const noopPatterns = /\b(no action needed|everything['']s on track|nothing.{0,20}(report|surface|flag|attention|urgent)|all.{0,15}(awaiting|on track|good|clear)|no.{0,15}blocking issues)\b/i;
+    if (reply.length < 100 && noopPatterns.test(reply)) {
+      console.log(`[ALIVE] ${style} check-in is a "nothing to report" anti-pattern — suppressing`);
+      return;
+    }
+
     const jid = this.engine.toJid(cron.contact);
     if (this.engine.notifQueue) {
       this.engine.notifQueue.queue(cron.contact, reply, { source: `checkin:${style}` });

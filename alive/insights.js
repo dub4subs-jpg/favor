@@ -124,8 +124,17 @@ GROUNDING (critical — violating ANY of these = broken output):
       return;
     }
 
-    if (!reply || reply === 'SKIP' || reply.includes('SKIP')) {
+    if (!reply || reply.trim().startsWith('SKIP')) {
       console.log('[ALIVE] Insights scan: nothing worth surfacing');
+      return;
+    }
+
+    // Catch "nothing to report" anti-pattern — LLM sometimes writes a verbose
+    // "everything's fine" message instead of saying SKIP as instructed.
+    // Only suppress short replies (<100 chars) to avoid killing legitimate content.
+    const noopPatterns = /\b(no action needed|everything['']s on track|nothing.{0,20}(report|surface|flag|attention|urgent)|all.{0,15}(awaiting|on track|good|clear)|no.{0,15}blocking issues)\b/i;
+    if (reply.length < 100 && noopPatterns.test(reply)) {
+      console.log('[ALIVE] Insight is a "nothing to report" anti-pattern — suppressing');
       return;
     }
 
