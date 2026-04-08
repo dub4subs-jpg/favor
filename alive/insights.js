@@ -233,7 +233,8 @@ GROUNDING (critical — violating ANY of these = broken output):
       const maxAgeMs = 3 * 24 * 60 * 60 * 1000;
       const tasks = e.db.getByCategory('task', 15)
         .filter(t => (t.status === 'pending' || t.status === 'active'))
-        .filter(t => (Date.now() - new Date(t.created_at).getTime()) <= maxAgeMs);
+        .filter(t => (Date.now() - new Date(t.created_at).getTime()) <= maxAgeMs)
+        .filter(t => !t.content.startsWith('[pre-compact]'));
       if (tasks.length) {
         const taskLines = tasks.map(t => {
           const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / (1000 * 60 * 60 * 24));
@@ -254,11 +255,22 @@ GROUNDING (critical — violating ANY of these = broken output):
       }
     } catch {}
 
-    // 4. Open threads
+    // 4. Open threads — auto-skip stale (>48h), auto-resolve ancient (>7d)
     try {
-      const threads = e.db.getOpenThreads(e.operatorContact, 5);
-      if (threads.length) {
-        parts.push(`OPEN THREADS:\n${threads.map(t => `- ${t.summary}`).join('\n')}`);
+      const threads = e.db.getOpenThreads(e.operatorContact, 10);
+      const staleMs = 48 * 60 * 60 * 1000;
+      const ancientMs = 7 * 24 * 60 * 60 * 1000;
+      const fresh = [];
+      for (const t of threads) {
+        const age = Date.now() - new Date(t.created_at).getTime();
+        if (age > ancientMs) {
+          try { e.db.resolveThread(t.id); } catch {}
+        } else if (age <= staleMs) {
+          fresh.push(t);
+        }
+      }
+      if (fresh.length) {
+        parts.push(`OPEN THREADS:\n${fresh.map(t => `- ${t.summary}`).join('\n')}`);
       }
     } catch {}
 
