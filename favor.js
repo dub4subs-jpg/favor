@@ -1817,7 +1817,7 @@ Working directory: /root/favor
 Task: ${userText}
 Be concise. Return your analysis/solution directly.`;
         const cliResult = await runClaudeCLI(cliPrompt);
-        reply = `*[Claude Engineering]*\n\n${cliResult}`;
+        reply = cliResult;
         modelUsed = 'claude-cli';
         history.push({ role: 'assistant', content: reply });
       } catch (cliErr) {
