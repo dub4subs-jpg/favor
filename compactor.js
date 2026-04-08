@@ -17,6 +17,9 @@ class Compactor {
     this.summaryTokens = opts.summaryTokens || 512;
     // Token budget: compact when estimated tokens exceed this (default ~25k tokens)
     this.tokenBudget = opts.tokenBudget || 25000;
+    // Per-contact cooldown to prevent compaction churn when hovering near threshold
+    this._lastCompactTime = new Map();
+    this._cooldownMs = opts.cooldownMs || 180000; // 3 minutes
     // Create full_transcripts table on startup
     this._initTranscriptsTable();
   }
@@ -68,6 +71,12 @@ class Compactor {
     const needsCompaction = messages.length > this.threshold || estimatedTokens > this.tokenBudget;
     if (!needsCompaction) return { compacted: false, messages };
 
+    // Cooldown: skip if this contact was compacted recently (prevents churn near threshold)
+    const lastTime = this._lastCompactTime.get(contact);
+    if (lastTime && Date.now() - lastTime < this._cooldownMs) {
+      return { compacted: false, messages };
+    }
+
     // Find a safe split point that doesn't break tool_use/tool_result pairs
     let splitAt = messages.length - this.keepRecent;
     while (splitAt > 0 && splitAt < messages.length) {
@@ -86,6 +95,10 @@ class Compactor {
     console.log(`[COMPACT] Compacting ${toCompact.length} messages for ${contact.substring(0, 15)}...`);
 
     try {
+      // Run summarization and fact extraction in parallel (independent operations)
+      const factsPromise = this._extractFacts(toCompact, contact).catch(e =>
+        console.warn('[COMPACT] Parallel fact extraction failed (non-fatal):', e.message)
+      );
       const summary = await this._summarize(toCompact);
 
       // Safety: reject summaries that lack real content
@@ -114,7 +127,7 @@ class Compactor {
         console.warn(`[COMPACTOR] Failed to archive originals (non-fatal):`, archiveErr.message);
       }
 
-      await this._extractFacts(toCompact, contact);
+      await factsPromise;
       this.db.saveCompactionSummary(contact, summary, toCompact.length);
       this.db.audit('compaction', `contact=${contact.substring(0, 15)} msgs=${toCompact.length}`);
 
@@ -146,6 +159,14 @@ class Compactor {
       const compactedHistory = [summaryMessage, assistantAck, ...toKeep];
       console.log(`[COMPACT] Done. ${messages.length} -> ${compactedHistory.length} messages`);
 
+      this._lastCompactTime.set(contact, Date.now());
+      // Evict stale cooldown entries to prevent memory leak
+      if (this._lastCompactTime.size > 50) {
+        const now = Date.now();
+        for (const [k, t] of this._lastCompactTime) {
+          if (now - t > this._cooldownMs) this._lastCompactTime.delete(k);
+        }
+      }
       return { compacted: true, messages: compactedHistory, summary };
     } catch (err) {
       console.error('[COMPACT] Summarization failed:', err.message);

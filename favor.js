@@ -1053,6 +1053,23 @@ async function scheduleSharedServices() {
   }
 }
 
+// ─── PER-JID PROCESSING LOCK ───
+// Prevents concurrent message processing for same contact (avoids session save races)
+const _jidLocks = new Map();
+
+async function withJidLock(jid, fn) {
+  while (_jidLocks.has(jid)) {
+    await _jidLocks.get(jid).catch(() => {});
+  }
+  const promise = fn();
+  _jidLocks.set(jid, promise);
+  try {
+    return await promise;
+  } finally {
+    _jidLocks.delete(jid);
+  }
+}
+
 async function startWhatsApp() {
   // Clean up previous socket to prevent overlapping connections (fixes 440 loop)
   if (sock) {
@@ -1304,7 +1321,8 @@ async function startWhatsApp() {
         } else if (msg.key?.participant?.endsWith('@lid') && msg.key?.remoteJid && !msg.key.remoteJid.endsWith('@lid')) {
           registerLidMapping(msg.key.participant, msg.key.remoteJid);
         }
-        await handleMessage(msg);
+        const jid = msg.key?.remoteJid || 'unknown';
+        await withJidLock(jid, () => handleMessage(msg));
       } catch (err) {
         console.error('[MSG ERROR]', err.message, err.stack?.split('\n')[1]);
       }
@@ -1317,7 +1335,8 @@ async function startTelegram() {
   telegramAdapter = new TelegramAdapter(config, {
     onMessage: async (msg) => {
       try {
-        await handleMessage(msg);
+        const jid = msg.key?.remoteJid || 'unknown';
+        await withJidLock(jid, () => handleMessage(msg));
       } catch (err) {
         console.error('[MSG ERROR]', err.message, err.stack?.split('\n')[1]);
       }
@@ -2190,7 +2209,40 @@ Run the Bash command NOW.`;
     const _tokensOut = Math.ceil((reply || '').length / 4);
     const _durationMs = Date.now() - routerStart;
 
-    await saveHistory(jid, history, topicId);
+    await sock.sendPresenceUpdate('paused', jid);
+
+    if (reply === '__SKIP__' || reply === '__IMAGE_SENT__') {
+      // Tool already sent the result (e.g. screenshot image) — no text reply needed
+      console.log('[ROUTER] Skipping text reply — tool already sent result');
+    } else {
+      // ─── CLAUDE CLI TIP: One-time suggestion if CLI not installed ───
+      if (!isClaudeAvailable() && modelUsed && !modelUsed.startsWith('claude-cli')) {
+        reply += getClaudeTip();
+      }
+
+      // ─── GUARDIAN: Redact any leaked API keys before sending ───
+      reply = guardian.redactKeys(reply);
+      if (guardian.scanForKeyLeak(reply)) {
+        db.audit('security.key_leak', 'API key detected in outgoing message — redacted');
+      }
+
+      // Format for WhatsApp: clean up markdown, fix formatting (skip for Telegram/Evolution)
+      if (PLATFORM === 'whatsapp') reply = formatForWhatsApp(reply);
+
+      if (reply.length > 4000) {
+        const chunks = splitMessage(reply, 4000);
+        for (const c of chunks) await sock.sendMessage(jid, { text: c });
+      } else {
+        await sock.sendMessage(jid, { text: reply });
+      }
+    }
+
+    // ─── SAVE HISTORY + COMPACTION (post-send — no longer blocks reply) ───
+    try {
+      await saveHistory(jid, history, topicId);
+    } catch (saveErr) {
+      console.error('[SAVE] Post-send history save failed:', saveErr.message);
+    }
 
     // ─── SESSION METRICS: log after saveHistory so compaction state is known ───
     try {
@@ -2204,39 +2256,6 @@ Run the Bash command NOW.`;
         compacted: history._wasCompacted || false
       });
     } catch (e) { console.warn('[AUDIT] Metrics log failed:', e.message); }
-
-    await sock.sendPresenceUpdate('paused', jid);
-
-    // Image was already sent by laptop_screenshot tool — skip text reply
-    if (reply === '__IMAGE_SENT__') return;
-
-    // Tool already sent the result (e.g. screenshot image via Claude CLI) — no text reply needed
-    if (reply === '__SKIP__') {
-      console.log('[ROUTER] Skipping text reply — tool already sent result');
-      // Still log telemetry above, just don't send text
-      return;
-    }
-
-    // ─── CLAUDE CLI TIP: One-time suggestion if CLI not installed ───
-    if (!isClaudeAvailable() && modelUsed && !modelUsed.startsWith('claude-cli')) {
-      reply += getClaudeTip();
-    }
-
-    // ─── GUARDIAN: Redact any leaked API keys before sending ───
-    reply = guardian.redactKeys(reply);
-    if (guardian.scanForKeyLeak(reply)) {
-      db.audit('security.key_leak', 'API key detected in outgoing message — redacted');
-    }
-
-    // Format for WhatsApp: clean up markdown, fix formatting (skip for Telegram/Evolution)
-    if (PLATFORM === 'whatsapp') reply = formatForWhatsApp(reply);
-
-    if (reply.length > 4000) {
-      const chunks = splitMessage(reply, 4000);
-      for (const c of chunks) await sock.sendMessage(jid, { text: c });
-    } else {
-      await sock.sendMessage(jid, { text: reply });
-    }
 
     // ─── GUARDIAN: Track API usage ───
     guardian.trackUsage(jid, modelUsed || config.model.id, 0, reply.length, decision?.route || 'full');
