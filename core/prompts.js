@@ -160,16 +160,41 @@ function buildSystemPrompt({ config, db, compactor, platform, contact, messageTe
 
   // Session gap awareness: if >4 hours since last interaction with this contact,
   // add a note so the bot doesn't awkwardly continue as if no time passed
+  // Enhanced with conversation continuity from open_threads
   let sessionGapNote = '';
   try {
     const profile = db.getContactProfile(contact);
     if (profile?.last_interaction) {
       const gapMs = Date.now() - new Date(profile.last_interaction).getTime();
       const gapHours = Math.floor(gapMs / 3600000);
-      if (gapHours >= 4 && gapHours < 48) {
-        sessionGapNote = `\n\n[SESSION GAP: ${gapHours} hours since last interaction with this person. Smoothly continue — don't explicitly mention the gap unless they do. Your conversation memory above has the context.]`;
-      } else if (gapHours >= 48) {
-        sessionGapNote = `\n\n[SESSION GAP: ${Math.floor(gapHours / 24)} days since last interaction. Check conversation memory above for context on what was last discussed. Re-establish context naturally if needed.]`;
+      if (gapHours >= 4) {
+        // Base gap note
+        if (gapHours < 48) {
+          sessionGapNote = `\n\n[SESSION GAP: ${gapHours} hours since last interaction with this person. Smoothly continue — don't explicitly mention the gap unless they do. Your conversation memory above has the context.]`;
+        } else {
+          sessionGapNote = `\n\n[SESSION GAP: ${Math.floor(gapHours / 24)} days since last interaction. Check conversation memory above for context on what was last discussed. Re-establish context naturally if needed.]`;
+        }
+
+        // Fetch continuity context from open threads
+        try {
+          let continuityNote = `\n\n=== SESSION CONTINUITY ===\nThe user has been away for ${gapHours < 48 ? gapHours + ' hours' : Math.floor(gapHours / 24) + ' days'}.\n`;
+          let hasContinuity = false;
+
+          // Get open threads for this contact
+          const openThreads = db.getOpenThreads(contact, 5);
+          if (openThreads?.length) {
+            hasContinuity = true;
+            continuityNote += `\nOpen threads:\n${openThreads.map(t => '- ' + (t.summary || 'Unnamed thread')).join('\n')}\n`;
+          }
+
+          continuityNote += `\nWhen responding, naturally reference what you were previously discussing if relevant. Don't dump a summary — weave it in conversationally.\n=== END CONTINUITY ===\n`;
+
+          if (hasContinuity) {
+            sessionGapNote += continuityNote;
+          }
+        } catch (_continuityErr) {
+          // Continuity enrichment is non-critical - silently skip if it fails
+        }
       }
     }
   } catch (_) {}

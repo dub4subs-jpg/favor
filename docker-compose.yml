@@ -1,0 +1,32 @@
+services:
+  favor:
+    build: .
+    container_name: favor
+    restart: unless-stopped
+    ports:
+      - "3099:3099"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - favor-data:/app/data
+      - ./auth-state:/app/auth-state
+      - ./knowledge:/app/knowledge
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: favor-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  favor-data:
+  redis-data:

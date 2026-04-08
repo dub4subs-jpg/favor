@@ -81,12 +81,26 @@ class MediaHandler {
   extractText(msg) {
     const m = msg.message;
     if (!m) return '';
-    if (m.conversation) return m.conversation;
-    if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
-    if (m.imageMessage?.caption) return m.imageMessage.caption;
-    if (m.videoMessage?.caption) return m.videoMessage.caption;
-    if (m.documentMessage?.caption) return m.documentMessage.caption;
-    return '';
+
+    // Extract the main text
+    let text = '';
+    if (m.conversation) text = m.conversation;
+    else if (m.extendedTextMessage?.text) text = m.extendedTextMessage.text;
+    else if (m.imageMessage?.caption) text = m.imageMessage.caption;
+    else if (m.videoMessage?.caption) text = m.videoMessage.caption;
+    else if (m.documentMessage?.caption) text = m.documentMessage.caption;
+
+    // Extract quoted/replied-to message if present
+    const contextInfo = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo || m.documentMessage?.contextInfo;
+    if (contextInfo?.quotedMessage) {
+      const q = contextInfo.quotedMessage;
+      const quotedText = q.conversation || q.extendedTextMessage?.text || q.imageMessage?.caption || q.videoMessage?.caption || q.documentMessage?.caption || '';
+      if (quotedText) {
+        text = `[Replying to: "${quotedText.slice(0, 500)}"]\n${text}`;
+      }
+    }
+
+    return text;
   }
 
   getMessageType(msg) {

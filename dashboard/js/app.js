@@ -32,11 +32,11 @@ let cleanupApp = null; // stores teardown function for login/logout cycles
 // Login screen
 function renderLogin() {
   const root = $('#app');
-  const err = h('div', { class: 'login-error' });
-  const serverInput = h('input', { type: 'text', placeholder: 'Server URL (e.g. http://your-server:3105)', class: 'login-input',
-    value: localStorage.getItem('favor_api_url') || '', style: { marginBottom: '8px', fontSize: '0.85rem' },
+  const err = h('div', { style: { color: 'var(--danger)', fontSize: '0.8rem', minHeight: '20px' }});
+  const serverInput = h('input', { type: 'text', placeholder: 'Server URL (e.g. http://your-server:3105)', class: 'input',
+    value: localStorage.getItem('favor_api_url') || '', style: { fontSize: '0.85rem' },
     onKeyDown: e => { if (e.key === 'Enter') tokenInput.focus(); }});
-  const tokenInput = h('input', { type: 'password', placeholder: 'API token', class: 'login-input',
+  const tokenInput = h('input', { type: 'password', placeholder: 'API token', class: 'input',
     onKeyDown: e => { if (e.key === 'Enter') submit(); }});
 
   async function submit() {
@@ -51,15 +51,15 @@ function renderLogin() {
     else { api.clearToken(); err.textContent = 'Invalid token or server unreachable'; }
   }
 
-  mount(root, h('div', { class: 'login-screen' },
-    h('div', { class: 'login-card' },
-      h('div', { class: 'login-logo' },
-        h('div', { class: 'login-brand' }, 'favor'),
-        h('div', { class: 'login-sub' }, 'mission control')),
+  mount(root, h('div', { class: 'login-page' },
+    h('div', { class: 'login-bg' }),
+    h('div', { class: 'login-container' },
+      h('div', { class: 'login-logo' }, 'favor'),
+      h('div', { class: 'login-subtitle' }, 'mission control'),
       h('div', { class: 'login-form' },
         serverInput,
         tokenInput,
-        h('button', { class: 'btn-primary', onClick: submit }, 'Connect'),
+        h('button', { class: 'btn', onClick: submit }, 'Connect'),
         err))));
   requestAnimationFrame(() => serverInput.value ? tokenInput.focus() : serverInput.focus());
 }
@@ -70,7 +70,7 @@ function renderApp() {
   if (cleanupApp) { cleanupApp(); cleanupApp = null; }
 
   const root = $('#app');
-  const content = h('div', { class: 'content' });
+  const content = h('div', { class: 'main' });
 
   function renderSidebar() {
     const nav = createNav(NAV_ITEMS, {

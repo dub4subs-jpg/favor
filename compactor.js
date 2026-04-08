@@ -17,6 +17,39 @@ class Compactor {
     this.summaryTokens = opts.summaryTokens || 512;
     // Token budget: compact when estimated tokens exceed this (default ~25k tokens)
     this.tokenBudget = opts.tokenBudget || 25000;
+    // Create full_transcripts table on startup
+    this._initTranscriptsTable();
+  }
+
+  // Create full_transcripts table for archiving original messages
+  _initTranscriptsTable() {
+    try {
+      // db might be a FavorMemory wrapper — access underlying .db if needed
+      const raw = this.db.db || this.db;
+      if (typeof raw.exec === 'function') {
+        raw.exec(`
+          CREATE TABLE IF NOT EXISTS full_transcripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact TEXT NOT NULL,
+            topic TEXT DEFAULT 'general',
+            messages TEXT NOT NULL,
+            compacted_at TEXT DEFAULT (datetime('now')),
+            message_count INTEGER DEFAULT 0,
+            token_estimate INTEGER DEFAULT 0
+          );
+          CREATE INDEX IF NOT EXISTS idx_transcripts_contact ON full_transcripts(contact);
+          CREATE INDEX IF NOT EXISTS idx_transcripts_date ON full_transcripts(compacted_at);
+        `);
+        console.log('[COMPACTOR] full_transcripts table ready');
+      }
+    } catch (e) {
+      console.warn('[COMPACTOR] Failed to create full_transcripts table:', e.message);
+    }
+  }
+
+  // Get raw sqlite db handle (handles FavorMemory wrapper)
+  _rawDb() {
+    return this.db.db || this.db;
   }
 
   // Estimate token count from messages (~4 chars per token)
@@ -63,6 +96,24 @@ class Compactor {
         return { compacted: false, messages };
       }
 
+      // ─── ARCHIVE ORIGINALS BEFORE COMPACTION ───
+      try {
+        const raw = this._rawDb();
+        const topic = toCompact[0]?._tag || toCompact[0]?.topicTag || 'general';
+        raw.prepare(
+          `INSERT INTO full_transcripts (contact, topic, messages, message_count, token_estimate) VALUES (?, ?, ?, ?, ?)`
+        ).run(
+          contact,
+          topic,
+          JSON.stringify(toCompact),
+          toCompact.length,
+          this._estimateTokens(toCompact)
+        );
+        console.log(`[COMPACTOR] Archived ${toCompact.length} original messages for ${contact.substring(0, 15)}`);
+      } catch (archiveErr) {
+        console.warn(`[COMPACTOR] Failed to archive originals (non-fatal):`, archiveErr.message);
+      }
+
       await this._extractFacts(toCompact, contact);
       this.db.saveCompactionSummary(contact, summary, toCompact.length);
       this.db.audit('compaction', `contact=${contact.substring(0, 15)} msgs=${toCompact.length}`);
@@ -98,12 +149,22 @@ class Compactor {
       return { compacted: true, messages: compactedHistory, summary };
     } catch (err) {
       console.error('[COMPACT] Summarization failed:', err.message);
-      return { compacted: false, messages: toKeep };
+      // IMPORTANT: Don't drop old messages without a summary — return the full history
+      // so we can try again next time rather than silently losing context
+      return { compacted: false, messages };
     }
   }
 
   async _summarize(messages) {
-    const transcript = messages.map(m => {
+    // Group messages by topic tag for structured summarization
+    const tagGroups = {};
+    for (const m of messages) {
+      const tag = m._tag || 'general';
+      if (!tagGroups[tag]) tagGroups[tag] = [];
+      tagGroups[tag].push(m);
+    }
+
+    const formatMsg = (m) => {
       if (m.role === 'user') {
         if (typeof m.content === 'string') return `User: ${m.content}`;
         if (Array.isArray(m.content)) {
@@ -124,7 +185,19 @@ class Compactor {
         }
       }
       return '';
-    }).filter(Boolean).join('\n');
+    };
+
+    // Build topic-grouped transcript
+    const hasMultipleTopics = Object.keys(tagGroups).length > 1;
+    let transcript;
+    if (hasMultipleTopics) {
+      transcript = Object.entries(tagGroups).map(([tag, msgs]) => {
+        const lines = msgs.map(formatMsg).filter(Boolean).join('\n');
+        return `[Topic: ${tag} (${msgs.length} messages)]\n${lines}`;
+      }).join('\n\n');
+    } else {
+      transcript = messages.map(formatMsg).filter(Boolean).join('\n');
+    }
 
     const prompt = `You are compressing a conversation into a reference document. The AI will read this summary to continue the conversation seamlessly — it MUST contain enough detail to avoid asking the user to repeat themselves.
 
@@ -136,7 +209,7 @@ RULES:
 - If the user asked a question that was answered, record BOTH the question and answer
 - If the user asked something NOT YET answered, mark it: [PENDING: question]
 
-Format:
+Format:${hasMultipleTopics ? ' Group by topic tags.\n' : ''}
 ## Topics
 - topic: specific details...
 
@@ -188,7 +261,7 @@ ${transcript}`;
 
       let raw = (await runClaudeHaiku(factPrompt)) || '{"facts":[],"decisions":[],"promises":[]}';
       // Strip markdown code fences that Claude sometimes wraps around JSON
-      raw = raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+      raw = raw.replace(/^\`\`\`(?:json)?\s*\n?/i, '').replace(/\n?\`\`\`\s*$/i, '').trim();
       const parsed = JSON.parse(raw);
       let savedCount = 0;
 
@@ -233,6 +306,7 @@ ${transcript}`;
     let prefix = '\n\n=== PREVIOUS CONVERSATION CONTEXT ===\n';
 
     if (todaySummaries.length) {
+      // Safety: if >4 today, condense oldest ones
       if (todaySummaries.length > 4) {
         const recent = todaySummaries.slice(-2);
         const older = todaySummaries.slice(0, -2);
@@ -259,6 +333,65 @@ ${transcript}`;
 
     prefix += '=== END PREVIOUS CONTEXT ===';
     return prefix;
+  }
+
+  // ─── RECALL ORIGINAL TRANSCRIPTS ───
+  // Retrieve archived original messages (before compaction destroyed them)
+  recallTranscript(contact, query, limit = 5) {
+    try {
+      const raw = this._rawDb();
+      const rows = raw.prepare(
+        `SELECT messages, compacted_at, topic, message_count FROM full_transcripts WHERE contact = ? ORDER BY compacted_at DESC LIMIT ?`
+      ).all(contact, limit);
+
+      if (!rows.length) return [];
+
+      if (!query) {
+        return rows.map(r => ({
+          messages: JSON.parse(r.messages),
+          date: r.compacted_at,
+          topic: r.topic,
+          messageCount: r.message_count
+        }));
+      }
+
+      // Keyword search through archived messages
+      const queryLower = query.toLowerCase();
+      return rows
+        .map(r => {
+          const messages = JSON.parse(r.messages);
+          const matches = messages.filter(m => {
+            const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+            return content.toLowerCase().includes(queryLower);
+          });
+          return matches.length ? {
+            messages: matches,
+            date: r.compacted_at,
+            topic: r.topic,
+            matchCount: matches.length
+          } : null;
+        })
+        .filter(Boolean);
+    } catch (e) {
+      console.warn('[COMPACTOR] recallTranscript failed:', e.message);
+      return [];
+    }
+  }
+
+  // ─── CLEANUP OLD TRANSCRIPTS ───
+  // Auto-delete transcript archives older than N days (default 90)
+  cleanOldTranscripts(days = 90) {
+    try {
+      const raw = this._rawDb();
+      const result = raw.prepare(
+        `DELETE FROM full_transcripts WHERE compacted_at < datetime('now', '-' || ? || ' days')`
+      ).run(days);
+      if (result.changes) console.log(`[COMPACTOR] Cleaned ${result.changes} old transcript archives (>${days} days)`);
+      return result.changes;
+    } catch (e) {
+      console.warn('[COMPACTOR] cleanOldTranscripts failed:', e.message);
+      return 0;
+    }
   }
 }
 

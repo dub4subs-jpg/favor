@@ -539,6 +539,34 @@ class FavorMemory {
     return this.db.prepare('SELECT id, content FROM memories WHERE embedding IS NULL').all();
   }
 
+  // Contact-scoped keyword search (for non-operator trust levels)
+  searchScoped(query, contact) {
+    const statusFilter = "AND (status IS NULL OR status NOT IN ('superseded', 'resolved'))";
+    const contactFilter = "AND contact = ?";
+    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    if (!terms.length) {
+      return this.db.prepare(`SELECT * FROM memories WHERE content LIKE ? ${statusFilter} ${contactFilter} ORDER BY created_at DESC LIMIT 20`)
+        .all(`%${query}%`, contact);
+    }
+    const conditions = terms.map(() => "LOWER(content) LIKE ?").join(' OR ');
+    const params = terms.map(t => `%${t}%`);
+    const rows = this.db.prepare(`SELECT * FROM memories WHERE (${conditions}) ${statusFilter} ${contactFilter} LIMIT 200`).all(...params, contact);
+    const now = Date.now();
+    const scored = rows.map(row => {
+      const lower = row.content.toLowerCase();
+      let termScore = 0;
+      for (const t of terms) {
+        const matches = (lower.match(new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        termScore += matches;
+      }
+      const ageMs = now - new Date(row.created_at).getTime();
+      const recencyBoost = ageMs < 86400000 ? 2.0 : ageMs < 604800000 ? 1.5 : 1.0;
+      const pinnedBoost = row.pinned ? 1.5 : 1.0;
+      return { ...row, score: termScore * recencyBoost * pinnedBoost };
+    });
+    return scored.sort((a, b) => b.score - a.score).slice(0, 20);
+  }
+
   search(query) {
     // BM25-style keyword ranking: score by term frequency + recency
     // Excludes superseded/resolved memories so stale info doesn't surface
@@ -568,6 +596,38 @@ class FavorMemory {
       return { ...row, score: termScore * recencyBoost * pinnedBoost };
     });
     return scored.sort((a, b) => b.score - a.score).slice(0, 20);
+  }
+
+  // Strict contact-scoped semantic search (only memories belonging to this contact, no global)
+  searchSemanticStrict(queryEmbedding, topK = 8, contact) {
+    const sql = "SELECT id, category, content, status, created_at, embedding, pinned, last_referenced, contact FROM memories WHERE embedding IS NOT NULL AND (status IS NULL OR status NOT IN ('superseded', 'resolved')) AND contact = ?";
+    const rows = this.db.prepare(sql).all(contact);
+    if (!rows.length) return [];
+    const now = Date.now();
+    const scored = rows.map(row => {
+      const emb = JSON.parse(row.embedding);
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < emb.length; i++) {
+        dot += queryEmbedding[i] * emb[i];
+        normA += queryEmbedding[i] * queryEmbedding[i];
+        normB += emb[i] * emb[i];
+      }
+      const cosine = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+      const ageMs = now - new Date(row.created_at).getTime();
+      const ageDays = ageMs / 86400000;
+      const recency = Math.exp(-ageDays / 90);
+      let reinforcement = 0.1;
+      if (row.last_referenced) {
+        const refAgeMs = now - new Date(row.last_referenced).getTime();
+        if (refAgeMs < 86400000) reinforcement = 1.0;
+        else if (refAgeMs < 604800000) reinforcement = 0.7;
+        else if (refAgeMs < 2592000000) reinforcement = 0.4;
+      }
+      const pinned = row.pinned ? 1.0 : 0.0;
+      if (cosine < 0.2) return { ...row, score: cosine };
+      return { ...row, score: cosine * 0.50 + recency * 0.20 + reinforcement * 0.15 + pinned * 0.15 };
+    });
+    return scored.sort((a, b) => b.score - a.score).slice(0, topK);
   }
 
   searchSemantic(queryEmbedding, topK = 8, contact = null) {

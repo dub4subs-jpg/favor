@@ -3,6 +3,7 @@
 class ApiClient {
   constructor() {
     this.token = localStorage.getItem('favor_token') || '';
+    // Default to same origin for self-hosted, or saved remote URL for hosted dashboards
     this.base = localStorage.getItem('favor_api_url') || window.location.origin;
     this._connected = false;
     this._listeners = new Set();

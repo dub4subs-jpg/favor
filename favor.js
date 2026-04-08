@@ -33,6 +33,7 @@ const CommandHandler = require('./core/command-handler');
 const MediaHandler = require('./core/media-handler');
 const { createToolExecutor } = require('./core/tool-executor');
 const ScreenAwareness = require('./core/screen-awareness');
+const { buildHistoryText, wrapHistory } = require('./core/history-builder');
 const reaper = require('./reaper');
 const pino = require('pino');
 
@@ -1389,6 +1390,8 @@ const getToolsForRole = (role) => accessControl.getToolsForRole(role);
 const isAllowed = (jid) => accessControl.isAllowed(jid);
 const isGroup = (jid) => accessControl.isGroup(jid);
 const registerLidMapping = (lid, phone) => accessControl.registerLidMapping(lid, phone);
+const getTrustLevel = (jid) => getRole(jid); // alias for backward compat
+const isContactScoped = (role) => role === 'customer' || role === 'guest';
 
 // ─── MEDIA FUNCTIONS (delegated to core/media-handler.js) ───
 const extractText = (msg) => mediaHandler.extractText(msg);
@@ -1545,6 +1548,22 @@ async function handleMessage(msg) {
       // Not operator, not staff, not authenticating — ignore
       console.log(`[SECURITY] Blocked non-operator message from ${authKey}`);
       return;
+    }
+  }
+
+  // ─── FIRST-TIME USER WELCOME ───
+  if (!isOperator(jid)) {
+    const hasSession = db.getSession(jid);
+    const hasTopics = db.db.prepare("SELECT 1 FROM topics WHERE contact = ? LIMIT 1").get(jid);
+    const hasProfile = db.getContactProfile(jid);
+    const isFirstTime = !hasSession && !hasTopics && (!hasProfile || hasProfile.message_count === 0);
+    if (isFirstTime) {
+      console.log(`[ONBOARDING] First-time user detected: ${jid.split("@")[0]}`);
+      const welcomeMsg = "Hey! I'm Favor -- your personal AI assistant on WhatsApp.\n\nHere's what I can help with:\n- *Research* -- Ask me anything, I'll dig deep\n- *Memory* -- I remember our conversations\n- *Tasks* -- Set reminders and follow-ups\n- *Creative* -- Writing, brainstorming, analysis\n\nJust send me a message like you'd text a friend. What can I help you with?";
+      await sock.sendMessage(jid, { text: welcomeMsg });
+      if (!global._firstTimeUsers) global._firstTimeUsers = new Set();
+      global._firstTimeUsers.add(jid);
+      // Still process their actual message normally below
     }
   }
 
@@ -1765,13 +1784,7 @@ async function handleMessage(msg) {
         fs.writeFileSync(imgPath, imgBuffer);
         console.log(`[VISION] Saved image to ${imgPath} (${Math.round(imgBuffer.length / 1024)}KB) for Claude CLI`);
 
-        const recentHistory = history.slice(-10).map(m => {
-          if (m.role === 'tool') return null;
-          if (m.tool_calls) return null;
-          const content = typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '';
-          if (!content) return null;
-          return `${m.role === 'user' ? 'Human' : 'Assistant'}: ${content}`;
-        }).filter(Boolean).join('\n\n');
+        const recentHistory = buildHistoryText(history, 25);
 
         const cliPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}
 
@@ -1942,13 +1955,7 @@ Produce a well-structured, professional output. Use markdown formatting with hea
     if (!reply && decision.route === 'mini') {
       // Try Claude CLI first for simple responses
       try {
-        const recentHistoryMini = history.slice(-10).map(m => {
-          if (m.role === 'tool') return null;
-          if (m.tool_calls) return null;
-          const content = typeof m.content === 'string' ? m.content : m.content?.map(c => c.text || '').join(' ') || '';
-          if (!content) return null;
-          return `${m.role === 'user' ? 'Human' : 'Assistant'}: ${content}`;
-        }).filter(Boolean).join('\n\n');
+        const recentHistoryMini = buildHistoryText(history, 25);
 
         const cliPrompt = `${buildSystemPrompt(jid, messageTextForRecall, relevantMemories)}
 
