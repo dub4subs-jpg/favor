@@ -36,7 +36,7 @@ function getTrustLevel(jid) {
   const opNum = (_config.whatsapp.operatorNumber || '').replace('+', '');
 
   // Operator (highest priority)
-  if (!opNum) return 'operator'; // no operator set = backwards compat
+  if (!opNum) return 'guest'; // no operator set = backwards compat
   if (phone && (phone.includes(opNum) || _verifiedNumbers.has(phone))) return 'operator';
 
   // Explicit permissions in config

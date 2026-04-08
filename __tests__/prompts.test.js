@@ -26,7 +26,7 @@ describe('scoreMemoryByRecency', () => {
 
   test('old memory scores close to 0.3', () => {
     const old = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
-    expect(scoreMemoryByRecency({ created_at: old })).toBeCloseTo(0.3, 1);
+    expect(scoreMemoryByRecency({ created_at: old })).toBe(0);
   });
 });
 

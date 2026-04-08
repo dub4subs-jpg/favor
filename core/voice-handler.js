@@ -17,6 +17,8 @@ const BOT_DIR = path.join(__dirname, '..');
  * @returns {string} Transcribed text or empty string
  */
 function localTranscribe(audioPath, language = 'en') {
+  // Sanitize language param to prevent shell injection
+  language = language.replace(/[^a-zA-Z0-9_-]/g, '');
   try {
     const result = execSync(
       `python3 ${path.join(BOT_DIR, 'transcribe.py')} "${audioPath}" ${language}`,

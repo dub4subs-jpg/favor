@@ -1,6 +1,8 @@
 // extract-text.js — Extracted from favor.js
 // Message text extraction and type detection
 
+const { stripInjectionPatterns } = require("../utils/sanitize");
+
 function extractText(msg) {
   const m = msg.message;
   if (!m) return '';
@@ -19,7 +21,7 @@ function extractText(msg) {
     const q = contextInfo.quotedMessage;
     const quotedText = q.conversation || q.extendedTextMessage?.text || q.imageMessage?.caption || q.videoMessage?.caption || q.documentMessage?.caption || '';
     if (quotedText) {
-      text = `[Replying to: "${quotedText.slice(0, 500)}"]\n${text}`;
+      text = `[Replying to: "${stripInjectionPatterns(quotedText.slice(0, 500))}"]\n${text}`;
     }
   }
 
