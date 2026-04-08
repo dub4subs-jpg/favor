@@ -139,8 +139,8 @@ GROUNDING (critical — violating ANY of these = broken output):
     }
 
     // Format guard: reject multi-item replies (violates "SINGLE most valuable insight" rule)
-    const bulletCount = (reply.match(/^[\s]*[•\-\*→►▸]\s/gm) || []).length;
-    if (bulletCount > 2) {
+    const bulletCount = (reply.match(/^[\s]*[•\-\*→►▸]\s?/gm) || []).length;
+    if (bulletCount > 1) {
       console.log(`[ALIVE] Insight has ${bulletCount} bullets (should be 1) — suppressing status report`);
       return;
     }
