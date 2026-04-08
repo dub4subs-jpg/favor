@@ -138,6 +138,19 @@ GROUNDING (critical — violating ANY of these = broken output):
       return;
     }
 
+    // Format guard: reject multi-item replies (violates "SINGLE most valuable insight" rule)
+    const bulletCount = (reply.match(/^[\s]*[•\-\*→►▸]\s/gm) || []).length;
+    if (bulletCount > 2) {
+      console.log(`[ALIVE] Insight has ${bulletCount} bullets (should be 1) — suppressing status report`);
+      return;
+    }
+
+    // Length guard: insights should be 2-4 sentences, not essays
+    if (reply.length > 500) {
+      console.log(`[ALIVE] Insight too long (${reply.length} chars, max 500) — suppressing`);
+      return;
+    }
+
     // Post-generation grounding check: reject if it mentions platforms we don't have access to
     const fabricationPatterns = /\b(linkedin|twitter|reddit|facebook|instagram|stack\s*overflow|hacker\s*news)\b/i;
     if (fabricationPatterns.test(reply)) {
