@@ -97,6 +97,18 @@
     "intervalMs": 180000,
     "lastContext": ""
   },
+  "curator": {
+    "enabled": true,
+    "scope": "default",
+    "operatorName": "Your Name",
+    "botName": "Your Bot",
+    "outputDir": "./data/knowledge",
+    "maxPerBucket": 100,
+    "staleActiveDays": 14,
+    "maxPromptChars": 15000,
+    "alwaysLoad": ["MEMORY.md", "ACTIVE.md", "FAILURES.md"],
+    "conditionalLoad": ["DECISIONS.md", "CONTACTS.md"]
+  },
   "cli": {
     "maxConcurrent": 3,
     "model": "sonnet",

@@ -26,6 +26,7 @@ const localEmbeddings = require('./embeddings');
 const MessageQueue = require('./message-queue');
 const ToolAudit = require('./tool-audit');
 const AdaptiveTimeouts = require('./adaptive-timeouts');
+const curator = require('./curator');
 const Planner = require('./planner');
 const FavorAPI = require('./api');
 const AccessControl = require('./core/access-control');
@@ -933,15 +934,20 @@ function buildMemoryPrompt(relevantMemories = [], contact = null) {
   return _bmp(db, relevantMemories, contact);
 }
 function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
+  // Load curated brain (auto-enabled, operator-only, safe no-op if files missing)
+  const curatedBrain = curator.loadCuratedBrain(config.curator || { enabled: true }, {
+    operatorOnly: isOperator(contact),
+  });
   const base = _buildSystemPrompt({
     config, db, compactor, platform: PLATFORM,
     contact, messageText, relevantMemories,
     dynamicKnowledge: buildDynamicKnowledge(messageText),
+    curatedBrain,
     scribe,
   });
   // Append ambient context from sensors (location, health, time) if available
   const ambient = typeof contextEngine !== 'undefined' ? contextEngine.getPromptSection() : '';
-  return ambient ? base + ambient : base;
+  return base + ambient;
 }
 
 // ─── SESSION MANAGEMENT ───

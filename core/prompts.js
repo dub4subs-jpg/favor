@@ -153,7 +153,7 @@ function buildJournalPrompt(scribe, contact) {
   return prompt;
 }
 
-function buildSystemPrompt({ config, db, compactor, platform, contact, messageText = '', relevantMemories = [], dynamicKnowledge = '', scribe = null }) {
+function buildSystemPrompt({ config, db, compactor, platform, contact, messageText = '', relevantMemories = [], dynamicKnowledge = '', curatedBrain = '', scribe = null }) {
   const name = config.identity.name;
   const contextPrefix = compactor.getContextPrefix(contact || '');
   const securityPhrase = (platform === 'telegram' ? config.telegram?.securityPhrase : config.whatsapp?.securityPhrase) || 'NOT_SET';
@@ -239,7 +239,7 @@ Then start executing step 1. Each subsequent tool call should reference which pl
 Commands: /clear /status /brain /memory /model /reload /crons /topics /sync /recover /help
 
 MEMORY SYNC: You have sync_update and sync_recover tools. Use sync_update to log important actions, decisions, task completions, and file changes so Claude Code stays in sync with your state. Use sync_recover after any restart to rebuild context from shared state.
-Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories, contact) + buildThreadPrompt(db, contact) + sessionGapNote + `
+Even after /clear, long-term memories persist.` + contextPrefix + dynamicKnowledge + curatedBrain + buildJournalPrompt(scribe, contact) + buildMemoryPrompt(db, relevantMemories, contact) + buildThreadPrompt(db, contact) + sessionGapNote + `
 
 === REMINDER ===
 You MUST follow all rules in your knowledge base above — especially your identity, Action-First Rule, and tool usage instructions. Your knowledge files are not suggestions, they are your operating instructions. When a rule says to use a tool, USE IT. Do not fall back to generic text responses.`;
