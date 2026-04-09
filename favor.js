@@ -34,10 +34,16 @@ const MediaHandler = require('./core/media-handler');
 const { createToolExecutor } = require('./core/tool-executor');
 const ScreenAwareness = require('./core/screen-awareness');
 const { buildHistoryText, wrapHistory } = require('./core/history-builder');
+const { sanitizeHistory } = require('./core/sanitize');
+const BotLoopBreaker = require('./bot-loop-breaker');
+const NotificationQueue = require('./notification-queue');
+const ContextEngine = require('./context-engine');
+const VoicePipeline = require('./voice-pipeline');
 const reaper = require('./reaper');
 const pino = require('pino');
 
 const logger = pino({ level: 'silent' }); // suppress baileys noise
+const loopBreaker = new BotLoopBreaker({ threshold: 3, windowMs: 60000, muteMins: 10 });
 
 // localTranscribe delegated to mediaHandler (core/media-handler.js)
 function localTranscribe(audioPath, language = 'en') { return mediaHandler.localTranscribe(audioPath, language); }
@@ -296,6 +302,28 @@ if (config.alive?.enabled !== false) {
 } else {
   console.log('[ALIVE] Disabled in config');
 }
+
+// ─── NOTIFICATION QUEUE (batches proactive messages) ───
+const notifQueue = new NotificationQueue({
+  windowMs: config.notifications?.windowMs || 120000,
+  sendFn: async (contact, text) => {
+    try {
+      const jid = contact.includes('@') ? contact : contact + '@s.whatsapp.net';
+      await sock.sendMessage(jid, { text });
+    } catch (e) { console.warn('[NOTIF] Send failed:', e.message); }
+  },
+  getSystemPrompt: () => buildSystemPrompt(
+    PLATFORM === 'telegram' ? `tg_${config.telegram?.operatorChatId || ''}` : (config.whatsapp?.operatorNumber?.replace('+', '') || '')
+  ),
+});
+if (alive) alive.notifQueue = notifQueue;
+
+// ─── CONTEXT ENGINE (ambient awareness — location, health, time) ───
+const contextEngine = new ContextEngine(db.db, {
+  config,
+  updateIntervalMs: config.contextEngine?.intervalMs || 300000,
+});
+contextEngine.start();
 
 // Backfill embeddings for any memories saved before semantic search was added
 setTimeout(() => backfillEmbeddings().catch(e => console.warn('[MEMORY] Backfill error:', e.message)), 5000);
@@ -905,59 +933,20 @@ function buildMemoryPrompt(relevantMemories = [], contact = null) {
   return _bmp(db, relevantMemories, contact);
 }
 function buildSystemPrompt(contact, messageText = '', relevantMemories = []) {
-  return _buildSystemPrompt({
+  const base = _buildSystemPrompt({
     config, db, compactor, platform: PLATFORM,
     contact, messageText, relevantMemories,
     dynamicKnowledge: buildDynamicKnowledge(messageText),
     scribe,
   });
+  // Append ambient context from sensors (location, health, time) if available
+  const ambient = typeof contextEngine !== 'undefined' ? contextEngine.getPromptSection() : '';
+  return ambient ? base + ambient : base;
 }
 
 // ─── SESSION MANAGEMENT ───
 
-// Sanitize history to ensure all tool_call messages have matching tool results
-function sanitizeHistory(messages) {
-  const clean = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-
-    if (msg.role === 'assistant' && msg.tool_calls?.length) {
-      // Collect all consecutive tool result messages that follow
-      const toolMsgs = [];
-      let j = i + 1;
-      while (j < messages.length && messages[j].role === 'tool') {
-        toolMsgs.push(messages[j]);
-        j++;
-      }
-      const foundIds = new Set(toolMsgs.map(m => m.tool_call_id));
-      const missing = msg.tool_calls.filter(tc => !foundIds.has(tc.id));
-
-      clean.push(msg);
-      // Push each tool_call's result — existing if found, synthetic if missing
-      for (const tc of msg.tool_calls) {
-        const existing = toolMsgs.find(m => m.tool_call_id === tc.id);
-        if (existing) {
-          clean.push(existing);
-        } else {
-          console.log(`[SANITIZE] Injecting synthetic result for tool_call ${tc.id}`);
-          clean.push({ role: 'tool', tool_call_id: tc.id, content: 'Error: tool execution was interrupted.' });
-        }
-      }
-      if (missing.length) console.log(`[SANITIZE] Fixed ${missing.length} missing tool result(s)`);
-      i = j; // skip past all tool messages we already handled
-    } else if (msg.role === 'tool') {
-      // Orphaned tool result with no preceding assistant tool_calls
-      console.log('[SANITIZE] Dropping orphaned tool result at index ' + i);
-      i++;
-    } else {
-      clean.push(msg);
-      i++;
-    }
-  }
-  while (clean.length > 0 && clean[0].role === 'assistant') clean.shift();
-  return clean;
-}
+// sanitizeHistory imported from core/sanitize.js (ensures tool_call/result pairing)
 
 function getHistory(contact) {
   const topic = db.getActiveTopic(contact);
@@ -1176,6 +1165,27 @@ async function startWhatsApp() {
         alive.setSock(sock);
         alive.ensureCrons();
         console.log('[ALIVE] Connected to WhatsApp + crons registered');
+      }
+
+      // ─── VOICE PIPELINE: initialize after sock is available ───
+      if (config.voice?.pipelineEnabled !== false) {
+        global._voicePipeline = new VoicePipeline({
+          tts: null, // TTS configured separately (OpenAI or edge-tts)
+          transcribeFn: async (buffer, mime) => mediaHandler.transcribeVoice(buffer, mime),
+          routeFn: async (text, contact) => {
+            // Route transcribed voice text through normal message flow
+            const { runClaudeCLI } = require('./router');
+            const sysPrompt = buildSystemPrompt(contact, text);
+            return runClaudeCLI(`${sysPrompt}\n\nUser: ${text}`, 30000);
+          },
+          sendVoiceFn: async (contact, audioBuffer) => {
+            await sock.sendMessage(contact, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true });
+          },
+          sendTextFn: async (contact, text) => {
+            await sock.sendMessage(contact, { text });
+          },
+        });
+        console.log('[VOICE-PIPE] Voice pipeline initialized');
       }
 
       // Sync: Bot online
@@ -1491,6 +1501,13 @@ async function handleMessage(msg) {
     }
   }
 
+  // ─── BOT LOOP BREAKER — prevent infinite AI-to-AI reply loops ───
+  const loopCheck = loopBreaker.check(jid, extractText(msg).trim());
+  if (loopCheck.skip) {
+    console.log(`[LOOP-BREAKER] Skipping ${jid}: ${loopCheck.reason}`);
+    return;
+  }
+
   // ─── GUARDIAN RATE LIMIT CHECK ───
   const guardCheck = guardian.checkRequest(jid, config.model.id, 'incoming');
   if (!guardCheck.allowed) {
@@ -1502,6 +1519,12 @@ async function handleMessage(msg) {
   const ts = new Date().toLocaleTimeString();
   const msgType = getMessageType(msg);
   const body = extractText(msg).trim();
+  loopBreaker.track(jid, body, 'in');
+  if (loopBreaker.isLooping(jid)) {
+    loopBreaker.mute(jid, 10);
+    console.warn(`[LOOP-BREAKER] Bot loop detected with ${jid} — muted for 10 min`);
+    return;
+  }
   const isVoice = msgType === 'voice';
   const isImage = msgType === 'image' || msgType === 'sticker';
   const isVideo = msgType === 'video';
@@ -1631,11 +1654,29 @@ async function handleMessage(msg) {
         userContent.push({ type: 'text', text: `${body || ''}\n[Operator sent a video${videoResult?.error ? ': ' + videoResult.error : ' that could not be processed'}]`.trim() });
       }
     } else if (isVoice) {
+      // Voice pipeline fast-path: end-to-end voice-to-voice for operator/staff
+      if ((role === 'operator' || role === 'staff') && global._voicePipeline && config.voice?.pipelineEnabled !== false) {
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const mime = msg.message?.audioMessage?.mimetype || msg.message?.pttMessage?.mimetype || 'audio/ogg';
+          const result = await global._voicePipeline.process(buffer, mime, jid, { textFallback: config.voice?.textFallback });
+          if (result.ok && !result.skipped) return; // Pipeline handled everything
+          if (result.ok && result.skipped) {
+            // Pipeline transcribed but reply was __SKIP__ — fall through
+            if (result.transcript) userContent.push({ type: 'text', text: `[Voice note transcription]: ${result.transcript}` });
+            else return;
+          }
+          // Pipeline failed — fall through to standard voice handling
+        } catch (e) {
+          console.warn('[VOICE-PIPE] Fast-path failed, falling back:', e.message);
+        }
+      }
+      // Standard voice handling (non-operator, or pipeline unavailable/failed)
       const transcript = await processVoice(msg);
       if (transcript) {
         userContent.push({ type: 'text', text: `[Voice note transcription]: ${transcript}` });
       } else {
-        userContent.push({ type: 'text', text: '[Operator sent a voice note but transcription is unavailable.]' });
+        userContent.push({ type: 'text', text: '[Voice note sent but transcription is unavailable.]' });
       }
     } else if (msgType !== 'text') {
       userContent.push({ type: 'text', text: `${body || ''}\n[Operator also sent a ${msgType} file]`.trim() });
@@ -2236,6 +2277,9 @@ Run the Bash command NOW.`;
         await sock.sendMessage(jid, { text: reply });
       }
     }
+
+    // Track outbound for loop detection (non-operator only)
+    if (!isOperator(jid) && reply && reply !== '__SKIP__') loopBreaker.track(jid, reply, 'out');
 
     // ─── SAVE HISTORY + COMPACTION (post-send — no longer blocks reply) ───
     try {
