@@ -2121,7 +2121,7 @@ Respond briefly and directly. Respond as ${config.identity?.name || 'Favor'}.`;
         const operatorNum = PLATFORM === 'telegram'
           ? (config.telegram?.operatorChatId || '')
           : (config.whatsapp?.operatorNumber || '');
-        const toolPrompt = `DO NOT EXPLAIN. Execute immediately using Bash.
+        const toolPrompt = `Execute immediately using Bash.
 
 User wants: "${userText}"
 
@@ -2132,9 +2132,16 @@ Tools: laptop_open_app({"app":"path"}), laptop_open_url({"url":"..."}), laptop_r
 For SCREENSHOTS: phone_screenshot and laptop_screenshot produce a file path. After running the tool, send the image:
 curl -s -X POST http://localhost:3099/send-image -H 'Content-Type: application/json' -d '{"to":"${operatorNum}","image_path":"THE_PATH_FROM_TOOL","caption":"Screenshot"}'
 
-Run the Bash command NOW.`;
+TASK COMPLETION RULES (CRITICAL):
+- NEVER say "Done" unless ALL items in the request are actually completed and verified.
+- For multi-item requests, you MUST process ALL items, not just the first one.
+- If you can't complete all items, say EXACTLY what you did and what's left.
+- Verify your work before reporting success — check that files exist, commands succeeded, etc.
+- NEVER give a one-word response like "Done" — always include specifics of what was accomplished.
+
+Your final answer must be your last text output (stdout). Run the Bash command NOW.`;
         const toolTimeouts = getCliTimeouts('tool') || [45000];
-        const cliResult = await runClaudeCLI(toolPrompt, toolTimeouts[0], { allowTools: true, model: 'haiku' });
+        const cliResult = await runClaudeCLI(toolPrompt, toolTimeouts[0], { allowTools: true });
         if (cliResult && cliResult.trim()) {
           // If tool already sent an image/result via /trigger, don't repeat
           const lower = cliResult.toLowerCase();

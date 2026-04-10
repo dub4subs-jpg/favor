@@ -114,7 +114,7 @@ Router uses Claude CLI for classification (free), keyword overrides for obvious 
 **How it works:**
 1. User sends a tool-like request ("take a screenshot", "open Chrome on my laptop")
 2. Router classifies it as `tool` route
-3. Claude CLI (haiku model, fast) reads the request and calls `tool-runner.js` via Bash
+3. Claude CLI reads the request and calls `tool-runner.js` via Bash
 4. tool-runner.js executes the action and returns the result
 5. If Claude CLI fails, GPT-4o function calling is used as fallback
 
@@ -233,7 +233,7 @@ Automated health + cleanup running every 3 days at 5am EST:
 
 ### Tool execution (favor.js)
 Tool requests go through two layers:
-1. **Claude CLI + tool-runner.js (free)** — Claude CLI (haiku) reads the request, picks a tool, runs `node tool-runner.js <tool> '<args>'` via Bash. If the tool sends its own result (e.g. screenshot image), the reply is `__SKIP__` and no text is sent.
+1. **Claude CLI + tool-runner.js (free)** — Claude CLI reads the request, picks a tool, runs `node tool-runner.js <tool> '<args>'` via Bash. If the tool sends its own result (e.g. screenshot image), the reply is `__SKIP__` and no text is sent.
 2. **GPT-4o function calling (fallback)** — If Claude CLI fails, falls back to OpenAI tool loop:
    - Send messages to OpenAI API with tools (function calling — requires GPT-4o)
    - If response has tool_calls, execute tools and append results
