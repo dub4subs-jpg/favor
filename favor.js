@@ -1838,6 +1838,7 @@ async function handleMessage(msg) {
     const toolsUsed = [];
 
     // ─── ROUTE: image — Claude CLI with vision (free via Max subscription) ───
+    let visionImgPath = null; // hoisted so tool route can access if vision fails
     if (!reply && isImage) {
       let imgPath = null;
       try {
@@ -1862,16 +1863,25 @@ Their message: ${body || 'What do you see in this image?'}
 
 Analyze the image and respond naturally. Respond as ${config.identity?.name || 'Favor'}.`;
         const visionTimeouts = getCliTimeouts('vision') || [90000];
+        visionImgPath = imgPath; // track for cleanup
         const cliResult = await runClaudeCLI(cliPrompt, visionTimeouts[0], { imagePath: imgPath });
         reply = cliResult;
         modelUsed = 'claude-cli-vision';
         history.push({ role: 'assistant', content: reply });
+        visionImgPath = null; // vision succeeded
+        if (imgPath) { try { fs.unlink(imgPath, () => {}); } catch (_) {} }
       } catch (cliErr) {
-        console.warn('[VISION] Claude CLI vision failed, falling back to GPT-4o:', cliErr.message);
-        decision.route = 'full'; // ensure GPT-4o fallback picks it up
-      } finally {
-        // Always clean up temp file
-        if (imgPath) fs.unlink(imgPath, () => {});
+        console.warn('[VISION] Claude CLI vision failed:', cliErr.message);
+        // If originally classified as tool/hybrid/agent, keep that route — tool route can read the image
+        if (decision.route === 'tool' || decision.route === 'hybrid' || decision.route === 'agent') {
+          console.log(`[VISION] Keeping original route "${decision.route}" — tool route will handle image`);
+          visionImgPath = imgPath;
+          imgPath = null; // prevent deletion
+        } else {
+          decision.route = 'full';
+          if (imgPath) fs.unlink(imgPath, () => {});
+          imgPath = null;
+        }
       }
     }
 
@@ -2121,25 +2131,41 @@ Respond briefly and directly. Respond as ${config.identity?.name || 'Favor'}.`;
         const operatorNum = PLATFORM === 'telegram'
           ? (config.telegram?.operatorChatId || '')
           : (config.whatsapp?.operatorNumber || '');
-        const toolPrompt = `Execute immediately using Bash.
+        const toolPrompt = `You are ${config.identity?.name || 'Favor'}, an AI assistant on a Linux server.
 
+=== TASK ===
 User wants: "${userText}"
 
+=== TOOLS ===
 Tool runner: node ${toolRunnerPath} TOOL 'JSON'
-
 Tools: laptop_open_app({"app":"path"}), laptop_open_url({"url":"..."}), laptop_run_command({"command":"..."}), laptop_status, phone_open_app({"app":"name"}), phone_status, phone_shell({"command":"..."}), server_exec({"command":"..."}), memory_search({"query":"..."}), cron_list, web_search({"query":"..."})
 
-For SCREENSHOTS: phone_screenshot and laptop_screenshot produce a file path. After running the tool, send the image:
+BROWSING: If playwright-cli is available, use it for web scraping/browsing:
+- playwright-cli -s default navigate "URL" — open a page
+- playwright-cli -s default snapshot — get page content
+- playwright-cli -s default click "ref" — click an element
+
+PRODUCT/SHOPPING RESULTS: Always include clickable links with product name + price. Do NOT take screenshots of product pages — send links instead.
+
+For SCREENSHOTS: phone_screenshot/laptop_screenshot produce a file path. Send via:
 curl -s -X POST http://localhost:3099/send-image -H 'Content-Type: application/json' -d '{"to":"${operatorNum}","image_path":"THE_PATH_FROM_TOOL","caption":"Screenshot"}'
 
-TASK COMPLETION RULES (CRITICAL):
-- NEVER say "Done" unless ALL items in the request are actually completed and verified.
-- For multi-item requests, you MUST process ALL items, not just the first one.
-- If you can't complete all items, say EXACTLY what you did and what's left.
-- Verify your work before reporting success — check that files exist, commands succeeded, etc.
-- NEVER give a one-word response like "Done" — always include specifics of what was accomplished.
+=== PROGRESS UPDATES (MANDATORY) ===
+Send progress via WhatsApp AS YOU WORK:
+curl -s -X POST http://localhost:3099/send -H 'Content-Type: application/json' -d '{"to":"${operatorNum}","message":"TEXT"}'
+Step 1: BEFORE starting, send a 1-line heads-up of what you're about to do.
+Step 2: After each major action, send a short update.
+Step 3: If something fails, tell the operator immediately.
 
-Your final answer must be your last text output (stdout). Run the Bash command NOW.`;
+=== FINAL ANSWER RULES (READ THIS LAST — MOST IMPORTANT) ===
+Your final stdout output is automatically sent as your reply. Do NOT send your final answer via the send API.
+- NEVER output just "Done" or any short confirmation. This is the #1 rule.
+- Your final output MUST describe what you actually did and what the results were.
+- Example good: "Searched Alibaba for X — found 3 options: [details]"
+- Example BAD: "Done" or "Done." or "Task complete"
+- If you couldn't complete the task, explain exactly what happened.
+
+Execute the task NOW using Bash.`;
         const toolTimeouts = getCliTimeouts('tool') || [45000];
         const cliResult = await runClaudeCLI(toolPrompt, toolTimeouts[0], { allowTools: true });
         if (cliResult && cliResult.trim()) {

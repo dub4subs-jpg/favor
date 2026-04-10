@@ -37,14 +37,15 @@ class AdaptiveTimeouts {
       const p95 = times[p95idx] || times[times.length - 1];
       const adaptive = Math.round(p95 * this.multiplier);
 
-      // Clamp to floor/ceiling
-      const clamped = Math.min(this.ceilingMs, Math.max(this.floorMs, adaptive));
+      // Clamp to floor/ceiling, but never go below static config
+      const staticFloor = Array.isArray(staticTimeouts) ? staticTimeouts[0] : (staticTimeouts || this.floorMs);
+      const clamped = Math.min(this.ceilingMs, Math.max(staticFloor, adaptive));
 
       // Return [attempt1, attempt2 = attempt1 * 1.3] matching existing pattern
       const timeouts = [clamped, Math.round(clamped * 1.3)];
 
       this._cache.set(route, { timeouts, updatedAt: Date.now() });
-      console.log(`[ADAPTIVE] ${route}: p95=${p95}ms → timeout=${clamped}ms (${rows.length} samples)`);
+      console.log(`[ADAPTIVE] ${route}: p95=${p95}ms → timeout=${clamped}ms (${rows.length} samples, floor=${staticFloor}ms)`);
       return timeouts;
     } catch (e) {
       return staticTimeouts; // DB error, fall back

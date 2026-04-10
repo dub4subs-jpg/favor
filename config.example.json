@@ -115,6 +115,7 @@
     "fallbackChain": ["claude-cli", "gemini"],
     "timeouts": {
       "chat": [90000, 120000],
+      "tool": [150000, 180000],
       "mini": [30000, 30000],
       "claude": [90000],
       "memory": [60000],

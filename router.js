@@ -367,16 +367,23 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model,
         const registry = require('./process-registry');
         registry.register(proc, { source: 'router', purpose: 'cli-task', timeoutMs, model: effectiveModel || 'default' });
       } catch {}
+      // Activity-based timeout: resets on each stdout/stderr chunk so active tool use stays alive.
+      // Hard ceiling at 3x timeoutMs prevents infinite runs. Idle silence = killed at timeoutMs.
+      const hardCeiling = timeoutMs * 3;
       let stdout = '', stderr = '', killed = false;
-      // Manual timeout — spawn's timeout option doesn't reliably kill tool-using processes
-      const timer = setTimeout(() => {
-        killed = true;
-        try { proc.kill('SIGKILL'); } catch (_) {}
-      }, timeoutMs);
-      proc.stdout.on('data', d => stdout += d);
-      proc.stderr.on('data', d => stderr += d);
+      const killProc = () => { if (killed) return; killed = true; try { proc.kill('SIGKILL'); } catch (_) {} };
+      let idleTimer = setTimeout(killProc, timeoutMs);
+      const hardTimer = setTimeout(killProc, hardCeiling);
+      const bumpTimer = () => {
+        if (killed) return;
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(killProc, timeoutMs);
+      };
+      proc.stdout.on('data', d => { stdout += d; bumpTimer(); });
+      proc.stderr.on('data', d => { stderr += d; bumpTimer(); });
       proc.on('close', (code) => {
-        clearTimeout(timer);
+        clearTimeout(idleTimer);
+        clearTimeout(hardTimer);
         _cliRunning--;
         _drainQueue();
         const out = stdout.trim() || stderr.trim() || '(no output)';
@@ -405,7 +412,8 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model,
         }
       });
       proc.on('error', (err) => {
-        clearTimeout(timer);
+        clearTimeout(idleTimer);
+        clearTimeout(hardTimer);
         _cliRunning--;
         _drainQueue();
         _cliCircuitRecordFailure(err);
