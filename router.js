@@ -353,7 +353,10 @@ function runClaudeCLI(prompt, timeoutMs = 90000, { imagePath, allowTools, model,
   return new Promise((resolve, reject) => {
     const run = () => {
       _cliRunning++;
-      const args = ['--print', '--bare'];
+      // NOTE: Do NOT add '--bare' — CLI v2.1.143+ broke it: refuses native OAuth AND
+      // rejects sk-ant-oat* tokens via the API-key path ("Invalid API key"). Plain --print
+      // reads OAuth from /root/.claude/.credentials.json on its own.
+      const args = ['--print'];
       const effectiveModel = model || _getDefaultModel();
       if (effectiveModel) args.push('--model', effectiveModel);
       if (imagePath || allowTools) args.push('--allowedTools', 'Bash', 'Read');

@@ -1,20 +1,14 @@
 // claude-env.js — Shared env builder for Claude CLI subprocesses
-// Uses Max subscription OAuth token (free) instead of paid API key
-const fs = require('fs');
+// Uses Max/Pro subscription OAuth (free) read natively from /root/.claude/.credentials.json by the CLI.
+// IMPORTANT: do NOT set ANTHROPIC_API_KEY from the OAuth token — as of CLI v2.1.143 the
+// server rejects sk-ant-oat* tokens when presented via the API-key path ("Invalid API key").
+// The CLI loads OAuth from disk on its own when ANTHROPIC_API_KEY is absent.
 
 function claudeEnv() {
-  const env = Object.fromEntries(
+  return Object.fromEntries(
     Object.entries({ ...process.env, PATH: `/root/.local/bin:${process.env.PATH}` })
       .filter(([k]) => !k.startsWith('CLAUDE') && !k.startsWith('ANTHROPIC_REUSE') && k !== 'ANTHROPIC_API_KEY')
   );
-  // CLI --print mode doesn't use OAuth natively — inject the OAuth token as API key
-  try {
-    const creds = JSON.parse(fs.readFileSync('/root/.claude/.credentials.json', 'utf8'));
-    if (creds.claudeAiOauth?.accessToken) {
-      env.ANTHROPIC_API_KEY = creds.claudeAiOauth.accessToken;
-    }
-  } catch (_) {}
-  return env;
 }
 
 module.exports = claudeEnv;
